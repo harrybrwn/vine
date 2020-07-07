@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package block;
+
+option go_package = ".;block";
+
+message Block {
+    bytes Data  = 1;
+    repeated Transaction Transactions = 2;
+
+    int64 Nonce    = 3;
+    bytes Hash     = 4;
+    bytes PrevHash = 5;
+}
+
+message Transaction {
+    bytes ID = 1;
+    // list of transaction inputs
+    repeated TxInput Inputs = 2;
+    // list of transaction outputs
+    repeated TxOutput Outputs = 3;
+}
+
+message TxInput {
+    // TxID is the transaction id
+    bytes TxID = 1;
+    // OutIndex gives the index of the output refrenced
+    // with respect to the transaction's list of
+    // outputs (0 being the transaction's first output and so on...)
+    int32 OutIndex = 2;
+    // Signature is the digital signature of
+    // the sender
+    bytes Signature = 3;
+    // Public key
+    bytes PubKey = 4;
+}
+
+message TxOutput {
+    // Amount holds the amount
+    // of coins in the output
+    int64 Amount = 1;
+    // Hash of the recipient's public
+    // key (see wallet package)
+    bytes PubKeyHash = 2;
+}
