@@ -3,8 +3,8 @@ package mockblock
 import (
 	"encoding/hex"
 
-	"github.com/harrybrwn/blockchain/block"
-	"github.com/harrybrwn/blockchain/key"
+	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-ledger/key"
 )
 
 // Chain is a blockchain
@@ -15,7 +15,7 @@ type Chain struct {
 }
 
 // NewChain returns a new block from the data and previous hash.
-func NewChain(user key.Holder) *Chain {
+func NewChain(user key.Receiver) *Chain {
 	c := &Chain{
 		i:      1,
 		txs:    make(map[string]*block.Transaction),
@@ -55,4 +55,15 @@ func (c *Chain) Next() *block.Block {
 	b := c.blocks[c.i]
 	c.i--
 	return b
+}
+
+// Push a list of transactions onto a new block in the chain
+func (c *Chain) Push(txs ...*block.Transaction) {
+	c.append(block.New(txs, c.blocks[len(c.blocks)-1].Hash))
+}
+
+// Bal gets a user's balance
+func (c *Chain) Bal(user key.Receiver) int64 {
+	bal, _ := block.FindSpendableOuts(c.Iter(), user, 1)
+	return bal
 }

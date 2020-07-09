@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/harrybrwn/blockchain/block"
+	"github.com/harrybrwn/go-ledger/block"
 )
 
 func TestNewBlockStore(t *testing.T) {

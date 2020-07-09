@@ -4,7 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/sha256"
 
-	"github.com/harrybrwn/blockchain/key"
+	"github.com/harrybrwn/go-ledger/key"
 	"github.com/mr-tron/base58"
 )
 

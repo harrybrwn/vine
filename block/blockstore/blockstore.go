@@ -5,7 +5,7 @@ import (
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/blockchain/block"
+	"github.com/harrybrwn/go-ledger/block"
 	"github.com/pkg/errors"
 )
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/harrybrwn/blockchain/key"
+	"github.com/harrybrwn/go-ledger/key"
 	"github.com/mr-tron/base58"
 )
 

@@ -4,17 +4,10 @@ import (
 	"crypto/ecdsa"
 )
 
-// Holder is something that holds a key
-// has an address
-type Holder interface {
-	Address() string
-}
-
 // Receiver defines an interface for objects that
 // are able to receive the contents of a transaction
 type Receiver interface {
 	Address() string
-	// PubKeyHash() []byte
 }
 
 // Sender defines an interface for

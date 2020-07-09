@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/blockchain/key"
-	"github.com/harrybrwn/blockchain/key/wallet"
+	"github.com/harrybrwn/go-ledger/key"
+	"github.com/harrybrwn/go-ledger/key/wallet"
 )
 
 func TestBlock(t *testing.T) {
@@ -54,9 +55,235 @@ func TestPOW(t *testing.T) {
 	}
 }
 
+func TestBuildStats(t *testing.T) {
+	eq, check := helpers(t)
+	harry := wallet.New(wallet.Version1)
+	jim := wallet.New(wallet.Version1)
+	keyharry := hex.EncodeToString(harry.PubKeyHash())
+	keyjim := hex.EncodeToString(jim.PubKeyHash())
+	c := newChain(harry)
+
+	check(c.addTx(jim, harry, 5))
+	stats := buildChainStats(c.Iter())
+	eq(stats.balances[keyharry], 100-5)
+	eq(stats.balances[keyjim], 5)
+	eq(stats.bal(jim), 5)
+	eq(stats.bal(harry), 95)
+
+	check(c.addTx(jim, harry, 90))
+	stats = buildChainStats(c.Iter())
+	eq(stats.balances[keyharry], 5)
+	eq(stats.balances[keyjim], 95)
+	eq(stats.bal(harry), 5)
+	eq(stats.bal(jim), 95)
+
+	check(c.addTx(harry, jim, 45))
+	stats = buildChainStats(c.Iter())
+	eq(stats.balances[keyharry], 50)
+	eq(stats.balances[keyjim], 50)
+	eq(stats.bal(harry), 50)
+	eq(stats.bal(jim), 50)
+}
+
+func TestTransaction(t *testing.T) {
+	eq, check := helpers(t)
+	user1, user2, user3 := wallet.New(0x0), wallet.New(0x0), wallet.New(0x0)
+	c := newChain(user1)
+	s := buildChainStats(c.Iter())
+	eq(s.bal(user1), 100)
+	eq(s.bal(user2), 0)
+	eq(s.bal(user3), 0)
+
+	check(c.push([]txHead{{user1, user2, 10}}))
+	s = buildChainStats(c.Iter())
+	eq(s.bal(user1), 90)
+	eq(s.bal(user2), 10)
+	eq(s.bal(user3), 0)
+
+	check(c.push([]txHead{
+		{user1, user2, 5},
+		{user2, user3, 10},
+	}))
+	s = buildChainStats(c.Iter())
+	eq(s.bal(user1), 85)
+	eq(s.bal(user2), 5)
+	eq(s.bal(user3), 10)
+
+	_, sp := s.spendableTxOutputs(user1, 0)
+	fmt.Println(sp)
+
+	// user4 := wallet.New(wallet.Version1)
+	// check(c.push([]txHead{
+	// 	{user1, user4, 85},
+	// 	{user2, user4, 5},
+	// 	{user3, user4, 10},
+	// }))
+	// s = buildChainStats(c.Iter())
+	// eq(s.bal(user4), 99)
+}
+
+func TestTx(t *testing.T) {
+}
+
+func eq(t *testing.T, a, b interface{}) {
+	t.Helper()
+	av, bv := reflect.ValueOf(a), reflect.ValueOf(b)
+	if !av.Type().Comparable() || !bv.Type().Comparable() {
+		t.Errorf("%T and %T are not comparable", a, b)
+		return
+	}
+	if reflect.DeepEqual(a, b) {
+		return
+	}
+	if av != bv {
+		t.Errorf("%v and %v not equal", a, b)
+		return
+	}
+}
+
+func helpers(t *testing.T) (
+	func(a, b int64),
+	func(error),
+) {
+	t.Helper()
+	eq := func(a, b int64) {
+		t.Helper()
+		if a != b {
+			t.Errorf("%v and %v not equal", a, b)
+		}
+	}
+	check := func(e error) {
+		t.Helper()
+		if e != nil {
+			t.Error(e)
+		}
+	}
+	return eq, check
+}
+
+func txMust(tx *Transaction, e error) *Transaction {
+	if e != nil {
+		panic(e)
+	}
+	return tx
+}
+
+// NewChain returns a new block from the data and previous hash.
+func newChain(user key.Receiver) *chain {
+	c := &chain{
+		i:      1,
+		txs:    make(map[string]*Transaction),
+		blocks: []*Block{},
+	}
+	b := Genisis(Coinbase(user.Address()))
+	c.append(b)
+	// c.stats = buildChainStats(c.Iter())
+	// c.stats = &chainStats{
+	// 	spendable: make(map[string][]int),
+	// 	balances:  make(map[string]int64),
+	// 	spent:     make(map[string][]int),
+	// 	unspent:   make([]*Transaction, 0),
+	// 	utxo:      make([]*TxOutput, 0),
+	// }
+	return c
+}
+
+// Chain implements the blockchain structure.
+type chain struct {
+	txs    map[string]*Transaction
+	blocks []*Block
+	i      int
+	// stats  *chainStats
+}
+
+func (c *chain) addTx(to key.Receiver, from key.Sender, amount int64) error {
+	tx := &Transaction{}
+	err := initTransaction(
+		c,
+		buildChainStats(c.Iter()),
+		txHead{from: from, to: to, amount: amount},
+		tx,
+	)
+	if err != nil {
+		return err
+	}
+	c.append(New([]*Transaction{tx}, c.tophash()))
+	return nil
+}
+
+func (c *chain) push(heads []txHead) (err error) {
+	var e error
+	n := len(heads)
+	txs := make([]*Transaction, n)
+	stats := buildChainStats(c.Iter())
+	for i := 0; i < n; i++ {
+		txs[i] = new(Transaction)
+		e = initTransaction(c, stats, heads[i], txs[i])
+		// txs[i], e = newTransaction(c, heads[i].to, heads[i].from, heads[i].amount)
+		if e != nil && err == nil {
+			err = e
+		}
+	}
+	blk := New(txs, c.tophash())
+	c.append(blk)
+	return
+}
+
+// Append will add a block to the ledger
+func (c *chain) append(blk *Block) {
+	for _, tx := range blk.Transactions {
+		c.txs[tx.StrID()] = tx
+	}
+	c.blocks = append(c.blocks, blk)
+}
+
+// Bal gets a user's balance
+func (c *chain) Bal(user key.Receiver) int64 {
+	stats := buildChainStats(c.Iter())
+	// return stats.balances[hex.EncodeToString(key.ExtractPubKeyHash(user.Address()))]
+	return stats.bal(user)
+}
+
+func (c *chain) tophash() []byte {
+	return c.blocks[len(c.blocks)-1].Hash
+}
+
+func (c *chain) Transaction(id []byte) *Transaction {
+	if tx, ok := c.txs[hex.EncodeToString(id)]; ok {
+		return tx
+	}
+	return nil
+}
+
+// Push will add a block to the chain from just the data given.
+func (c *chain) Push(data string) {
+	bytedata := []byte(data)
+	prev := c.blocks[len(c.blocks)-1]
+	c.append(prev.CreateNext(bytedata))
+}
+
+func (c *chain) Iter() Iterator {
+	c.i = len(c.blocks) - 1
+	return c
+}
+
+func (c *chain) Next() *Block {
+	if c.i < 0 {
+		return nil
+	}
+	block := c.blocks[c.i]
+	c.i--
+	return block
+}
+
+// TODO: find out how long it takes to
+// solve the concensus algorithm, tweak to get 10 mins
+func BenchAddBlock(b *testing.B) {
+}
+
+// this test is mainly a dummy test for gRPC stuff
 func TestRPC(t *testing.T) {
-	// this test is mainly a dummy test for gRPC
-	b := New([]*Transaction{}, []byte{})
+	b := New([]*Transaction{{ID: []byte("testTX")}}, []byte{})
 	raw, err := proto.Marshal(b)
 	if err != nil {
 		t.Error(err)
@@ -71,6 +298,16 @@ func TestRPC(t *testing.T) {
 	}
 	if bytes.Compare(b.Hash, block.Hash) != 0 {
 		t.Error("decoded with wrong hash")
+	}
+	b.Transactions[0].ID = []byte("changing the tx")
+
+	// just making sure its a deep copy lol
+	blockCp := proto.Clone(block).(*Block)
+	if bytes.Compare(b.Hash, blockCp.Hash) != 0 {
+		t.Error("decoded with wrong hash")
+	}
+	if string(blockCp.Transactions[0].ID) != "testTX" {
+		t.Error("proto.Clone does not copy the inner data pointers")
 	}
 
 	// tests below are for test coverage... sorry
@@ -95,114 +332,4 @@ func TestRPC(t *testing.T) {
 	if len(tx.GetOutputs()) != 0 {
 		t.Error("tx should have no outputs")
 	}
-}
-
-func TestTx(t *testing.T) {
-	harry := wallet.New(wallet.Version1)
-	jim := wallet.New(wallet.Version1)
-
-	c := newChain(harry) // harry gets the coinbase
-	var bal int64 = 0
-	bal, _ = FindSpendableOuts(c.Iter(), harry, 1)
-	if bal <= 0 {
-		t.Error("should have positive balance", bal)
-	}
-
-	err := c.addTx(jim, harry, 15)
-	if err != nil {
-		t.Error(err)
-	}
-	newbal, _ := FindSpendableOuts(c.Iter(), harry, 1)
-	if newbal != (bal - 15) {
-		t.Error("balance should be reduced by 15")
-	}
-	outs := UnspentTxOutputs(c.Iter(), harry.Address())
-	bal = 0
-	for _, o := range outs {
-		bal += o.Amount
-	}
-	if newbal != bal {
-		t.Errorf("should have gotten same balance: %d and %d", newbal, bal)
-	}
-	bal, _ = FindSpendableOuts(c.Iter(), jim, 1)
-	if bal != 15 {
-		t.Error("recipient should have gotten the money")
-	}
-	_, err = NewTransaction(c, harry, jim, 100)
-	if err == nil {
-		t.Error("expected an error")
-	}
-	if err != ErrNotEnoughFunds {
-		t.Error("did not go get the expected error")
-	}
-}
-
-// NewChain returns a new block from the data and previous hash.
-func newChain(user key.Holder) *chain {
-	c := &chain{
-		i:      1,
-		txs:    make(map[string]*Transaction),
-		blocks: []*Block{},
-	}
-	b := Genisis(Coinbase(user.Address()))
-	c.append(b)
-	return c
-}
-
-// Chain implements the blockchain structure.
-type chain struct {
-	txs    map[string]*Transaction
-	blocks []*Block
-	i      int
-}
-
-func (chain *chain) addTx(to key.Receiver, from key.Sender, amount int64) error {
-	tx, err := NewTransaction(chain, to, from, amount)
-	if err != nil {
-		return err
-	}
-	prev := chain.blocks[len(chain.blocks)-1].Hash
-	chain.append(New([]*Transaction{tx}, prev))
-	return nil
-}
-
-// Append will add a block to the ledger
-func (chain *chain) append(blk *Block) {
-	for _, tx := range blk.Transactions {
-		chain.txs[tx.StrID()] = tx
-	}
-	chain.blocks = append(chain.blocks, blk)
-}
-
-func (chain *chain) Transaction(id []byte) *Transaction {
-	if tx, ok := chain.txs[hex.EncodeToString(id)]; ok {
-		return tx
-	}
-	return nil
-}
-
-// Push will add a block to the chain from just the data given.
-func (chain *chain) Push(data string) {
-	bytedata := []byte(data)
-	prev := chain.blocks[len(chain.blocks)-1]
-	chain.append(prev.CreateNext(bytedata))
-}
-
-func (chain *chain) Iter() Iterator {
-	chain.i = len(chain.blocks) - 1
-	return chain
-}
-
-func (chain *chain) Next() *Block {
-	if chain.i < 0 {
-		return nil
-	}
-	block := chain.blocks[chain.i]
-	chain.i--
-	return block
-}
-
-// TODO: find out how long it takes to
-// solve the concensus algorithm, tweak to get 10 mins
-func BenchAddBlock(b *testing.B) {
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/harrybrwn/blockchain/cli"
+	"github.com/harrybrwn/go-ledger/cli"
 )
 
 func main() {
