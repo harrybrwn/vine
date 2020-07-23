@@ -8,13 +8,12 @@ import (
 	"math"
 	"math/big"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/harrybrwn/errs"
 )
 
 type hashDifficulty uint16
 
-const difficulty hashDifficulty = 16
+var difficulty hashDifficulty = 16
 
 // Provable is defines an interface for
 // block hashing
@@ -87,13 +86,18 @@ func hashBlockE(difficulty hashDifficulty, nonce int64, block Provable) ([]byte,
 		return hash.Sum(nil), err
 	}
 	// add all the transactions
-	for _, tx := range block.GetTransactions() {
-		raw, _ := proto.Marshal(tx)
-		if err != nil {
-			return hash.Sum(nil), err
-		}
-		hash.Write(raw)
+	// for _, tx := range block.GetTransactions() {
+	// raw, _ := proto.Marshal(tx)
+	// if err != nil {
+	// return hash.Sum(nil), err
+	// }
+	// hash.Write(raw)
+	// }
+	merkleRoot, err := txMerkleRoot(block.GetTransactions())
+	if err != nil {
+		return nil, err
 	}
+	hash.Write(merkleRoot)
 	_, err1 = hash.Write(block.GetData())
 	_, err2 = hash.Write(block.GetPrevHash())
 	return hash.Sum(nil), errs.Pair(err1, err2)
@@ -106,10 +110,12 @@ func hashBlock(difficulty hashDifficulty, nonce int64, block Provable) []byte {
 	binary.Write(hash, binary.BigEndian, difficulty)
 	binary.Write(hash, binary.BigEndian, nonce)
 	// add all the transactions
-	for _, tx := range block.GetTransactions() {
-		raw, _ := proto.Marshal(tx)
-		hash.Write(raw)
-	}
+	// for _, tx := range block.GetTransactions() {
+	// raw, _ := proto.Marshal(tx)
+	// hash.Write(raw)
+	// }
+	merkleRoot, _ := txMerkleRoot(block.GetTransactions())
+	hash.Write(merkleRoot)
 	hash.Write(block.GetData())
 	hash.Write(block.GetPrevHash())
 	return hash.Sum([]byte{})

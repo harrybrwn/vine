@@ -2,6 +2,7 @@ package block
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"reflect"
@@ -11,6 +12,10 @@ import (
 	"github.com/harrybrwn/go-ledger/key"
 	"github.com/harrybrwn/go-ledger/key/wallet"
 )
+
+func init() {
+	difficulty = 6
+}
 
 func TestBlock(t *testing.T) {
 	addr := wallet.New(wallet.Version1)
@@ -65,10 +70,10 @@ func TestBuildStats(t *testing.T) {
 
 	check(c.addTx(jim, harry, 5))
 	stats := buildChainStats(c.Iter())
-	eq(stats.balances[keyharry], 100-5)
+	eq(stats.balances[keyharry], coinbaseValue-5)
 	eq(stats.balances[keyjim], 5)
 	eq(stats.bal(jim), 5)
-	eq(stats.bal(harry), 95)
+	eq(stats.bal(harry), coinbaseValue-5)
 
 	check(c.addTx(jim, harry, 90))
 	stats = buildChainStats(c.Iter())
@@ -85,12 +90,44 @@ func TestBuildStats(t *testing.T) {
 	eq(stats.bal(jim), 50)
 }
 
+func h(hash []byte) []byte {
+	res := sha256.Sum256(hash)
+	return res[:]
+}
+func join(a, b []byte) []byte {
+	return bytes.Join([][]byte{a, b}, nil)
+}
+
+func TestMerkleTree(t *testing.T) {
+	pass1 := [][]byte{
+		h(join(h([]byte("one")), h([]byte("two")))),
+		h(join(h([]byte("three")), h([]byte("four")))),
+		h(join(h([]byte("five")), h([]byte("five")))),
+	}
+	pass2 := [][]byte{
+		h(join(pass1[0], pass1[1])),
+		h(join(pass1[2], pass1[2])),
+	}
+	expected := h(join(pass2[0], pass2[1]))
+
+	res := merkleroot([][]byte{
+		h([]byte("one")),
+		h([]byte("two")),
+		h([]byte("three")),
+		h([]byte("four")),
+		h([]byte("five")),
+	})
+	if bytes.Compare(res, expected) != 0 {
+		t.Error("wrong merkle root computed")
+	}
+}
+
 func TestTransaction(t *testing.T) {
 	eq, check := helpers(t)
 	user1, user2, user3 := wallet.New(0x0), wallet.New(0x0), wallet.New(0x0)
 	c := newChain(user1)
 	s := buildChainStats(c.Iter())
-	eq(s.bal(user1), 100)
+	eq(s.bal(user1), coinbaseValue)
 	eq(s.bal(user2), 0)
 	eq(s.bal(user3), 0)
 
@@ -100,6 +137,8 @@ func TestTransaction(t *testing.T) {
 	eq(s.bal(user2), 10)
 	eq(s.bal(user3), 0)
 
+	// user1 pays 5  to user2
+	// user2 pays 10 to user3
 	check(c.push([]txHead{
 		{user1, user2, 5},
 		{user2, user3, 10},
@@ -108,18 +147,44 @@ func TestTransaction(t *testing.T) {
 	eq(s.bal(user1), 85)
 	eq(s.bal(user2), 5)
 	eq(s.bal(user3), 10)
+	eq(s.bal(user1)+s.bal(user2)+s.bal(user3), coinbaseValue)
 
-	_, sp := s.spendableTxOutputs(user1, 0)
-	fmt.Println(sp)
+	tx := &Transaction{}
+	// user1 pays 25 to user2
+	// user3 pays 5  to user2
+	check(initTransaction(c, s, txHead{user3, user2, 5}, tx))
+	check(initTransaction(c, s, txHead{user1, user2, 25}, tx))
+	c.pushblock(tx)
+
+	s = buildChainStats(c.Iter())
+	eq(s.bal(user1), 60)
+	eq(s.bal(user2), 35)
+	eq(s.bal(user3), 5)
+	eq(s.bal(user1)+s.bal(user2)+s.bal(user3), coinbaseValue)
+
+	tx = &Transaction{}
+	bal, spendable := s.spendableTxOutputs(user1.PubKeyHash(), 5)
+	check(tx.setInputs(user1, spendable))
+	var err error
+	tx.Outputs, err = newOutputs(user1, bal,
+		[]key.Receiver{user2, user3},
+		[]int64{5, 10},
+	)
+	check(err)
+	c.pushblock(tx)
+	s = buildChainStats(c.Iter())
+	eq(s.bal(user1), 45)
+	eq(s.bal(user2), 40)
+	eq(s.bal(user3), 15)
 
 	// user4 := wallet.New(wallet.Version1)
 	// check(c.push([]txHead{
-	// 	{user1, user4, 85},
-	// 	{user2, user4, 5},
-	// 	{user3, user4, 10},
+	// {user1, user4, 45},
+	// {user2, user4, 40},
+	// {user3, user4, 15},
 	// }))
 	// s = buildChainStats(c.Iter())
-	// eq(s.bal(user4), 99)
+	// eq(s.bal(user4), 100)
 }
 
 func TestTx(t *testing.T) {
@@ -161,13 +226,6 @@ func helpers(t *testing.T) (
 	return eq, check
 }
 
-func txMust(tx *Transaction, e error) *Transaction {
-	if e != nil {
-		panic(e)
-	}
-	return tx
-}
-
 // NewChain returns a new block from the data and previous hash.
 func newChain(user key.Receiver) *chain {
 	c := &chain{
@@ -177,14 +235,6 @@ func newChain(user key.Receiver) *chain {
 	}
 	b := Genisis(Coinbase(user.Address()))
 	c.append(b)
-	// c.stats = buildChainStats(c.Iter())
-	// c.stats = &chainStats{
-	// 	spendable: make(map[string][]int),
-	// 	balances:  make(map[string]int64),
-	// 	spent:     make(map[string][]int),
-	// 	unspent:   make([]*Transaction, 0),
-	// 	utxo:      make([]*TxOutput, 0),
-	// }
 	return c
 }
 
@@ -193,7 +243,6 @@ type chain struct {
 	txs    map[string]*Transaction
 	blocks []*Block
 	i      int
-	// stats  *chainStats
 }
 
 func (c *chain) addTx(to key.Receiver, from key.Sender, amount int64) error {
@@ -219,7 +268,6 @@ func (c *chain) push(heads []txHead) (err error) {
 	for i := 0; i < n; i++ {
 		txs[i] = new(Transaction)
 		e = initTransaction(c, stats, heads[i], txs[i])
-		// txs[i], e = newTransaction(c, heads[i].to, heads[i].from, heads[i].amount)
 		if e != nil && err == nil {
 			err = e
 		}
@@ -229,19 +277,16 @@ func (c *chain) push(heads []txHead) (err error) {
 	return
 }
 
+func (c *chain) pushblock(txs ...*Transaction) {
+	c.append(New(txs, c.tophash()))
+}
+
 // Append will add a block to the ledger
 func (c *chain) append(blk *Block) {
 	for _, tx := range blk.Transactions {
 		c.txs[tx.StrID()] = tx
 	}
 	c.blocks = append(c.blocks, blk)
-}
-
-// Bal gets a user's balance
-func (c *chain) Bal(user key.Receiver) int64 {
-	stats := buildChainStats(c.Iter())
-	// return stats.balances[hex.EncodeToString(key.ExtractPubKeyHash(user.Address()))]
-	return stats.bal(user)
 }
 
 func (c *chain) tophash() []byte {
@@ -278,7 +323,13 @@ func (c *chain) Next() *Block {
 
 // TODO: find out how long it takes to
 // solve the concensus algorithm, tweak to get 10 mins
-func BenchAddBlock(b *testing.B) {
+func BenchmarkPOW(b *testing.B) {
+	blk := Genisis(Coinbase(""))
+	difficulty = 16
+	for n := 0; n < b.N; n++ {
+		// difficulty = hashDifficulty(n)
+		ProofOfWork(blk)
+	}
 }
 
 // this test is mainly a dummy test for gRPC stuff

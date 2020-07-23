@@ -4,10 +4,17 @@ import (
 	"crypto/ecdsa"
 )
 
+// Addressable defines an interface for
+// objects that hold an address
+type Addressable interface {
+	Address() string
+}
+
 // Receiver defines an interface for objects that
 // are able to receive the contents of a transaction
 type Receiver interface {
-	Address() string
+	Addressable
+	PubKeyHash() []byte
 }
 
 // Sender defines an interface for
@@ -18,7 +25,6 @@ type Sender interface {
 	Receiver
 	PrivateKey() *ecdsa.PrivateKey
 	PublicKey() []byte
-	PubKeyHash() []byte
 }
 
 // NewReceiver creates a receiver type

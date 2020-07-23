@@ -3,10 +3,8 @@
 package block
 
 import (
+	"crypto/sha256"
 	"errors"
-	"fmt"
-
-	"github.com/harrybrwn/go-ledger/key"
 )
 
 // ErrNotEnoughFunds is an error returned when a sender
@@ -68,7 +66,9 @@ func Genisis(coinbase *Transaction) *Block {
 // IsGenisis will return true if the block given
 // is the genisis block.
 func IsGenisis(b *Block) bool {
-	return len(b.PrevHash) == 0 && len(b.Transactions) == 1
+	return len(b.PrevHash) == 0 &&
+		len(b.Transactions) == 1 &&
+		b.Transactions[0].IsCoinbase()
 }
 
 // CreateNext will create a new block using the data given and the
@@ -82,57 +82,24 @@ func (b *Block) CreateNext(data []byte) *Block {
 	return block
 }
 
-// Coinbase will create a coinbase transaction.
-func Coinbase(to string) *Transaction {
-	tx := &Transaction{
-		Inputs: []*TxInput{
-			{
-				TxID:      []byte{},
-				OutIndex:  -1,
-				Signature: []byte(fmt.Sprintf("Coins to %s", to)),
-			},
-		},
-		Outputs: []*TxOutput{
-			{
-				Amount:     100,
-				PubKeyHash: key.ExtractPubKeyHash(to),
-			},
-		},
+func merkleroot(hashes [][]byte) []byte {
+	n := len(hashes)
+	if n == 1 {
+		return hashes[0]
 	}
-	tx.ID = tx.hash()
-	return tx
-}
-
-// FindSpendableOuts will search the chain for spendable
-// outputs for the address given some amount.
-func FindSpendableOuts(
-	chain Iterator,
-	address key.Receiver,
-	amount int64,
-) (
-	total int64,
-	unspent map[string][]int,
-) {
-	pubkh := key.ExtractPubKeyHash(address.Address())
-	stats := buildChainStats(chain)
-	// return stats.balances[hex.EncodeToString(pubkh)], stats.spendable
-
-	unspent = make(map[string][]int)
-	// unspentTxs := unspentTx(chain, pubkh)
-	for _, tx := range stats.unspent {
-		txid := tx.StrID()
-		for outID, out := range tx.Outputs {
-			if !out.isLockedWith(pubkh) {
-				continue
-			}
-			if total < amount {
-				total += out.Amount
-				unspent[txid] = append(unspent[txid], outID)
-				if total >= amount {
-					return
-				}
-			}
-		}
+	if n%2 != 0 {
+		hashes = append(hashes, hashes[n-1])
+		n++
 	}
-	return
+	var (
+		hash = sha256.New()
+		tree = make([][]byte, 0, n/2)
+	)
+	for i := 0; i < n; i += 2 {
+		hash.Write(hashes[i])
+		hash.Write(hashes[i+1])
+		tree = append(tree, hash.Sum(nil))
+		hash.Reset()
+	}
+	return merkleroot(tree)
 }
