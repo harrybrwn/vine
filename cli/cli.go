@@ -6,12 +6,19 @@ import (
 
 // NewBLK returns a new 'blk' root command
 func NewBLK() *cobra.Command {
-	cmd := &cobra.Command{
+	c := &cobra.Command{
 		Use:           "blk",
 		SilenceUsage:  false,
 		SilenceErrors: false,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Usage()
+		},
 	}
-	return cmd
+	c.AddCommand(
+		newInitBlockStoreCmd(),
+		newSyncCmd(),
+	)
+	return c
 }
 
 // NewBLKMine returns a new 'blkmine' root command
