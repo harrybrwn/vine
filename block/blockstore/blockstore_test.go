@@ -25,7 +25,7 @@ func TestNewBlockStore(t *testing.T) {
 		t.Error(err)
 	}
 	if !ok {
-		t.Error("should be valid")
+		t.Error("chain of hashes should be valid")
 	}
 	if err = store.Close(); err != nil {
 		t.Error(err)
@@ -43,7 +43,7 @@ func TestNewBlockStore(t *testing.T) {
 		t.Error(err)
 	}
 	if !ok {
-		t.Error("should be valid")
+		t.Error("chain of hashes should be valid")
 	}
 	if err = store.Close(); err != nil {
 		t.Error(err)
@@ -91,10 +91,10 @@ func TestBlockIter(t *testing.T) {
 }
 
 func TestUpdateStore(t *testing.T) {
-
 }
 
 func testStore(t *testing.T) (*BlockStore, string, error) {
+	t.Helper()
 	dir := tempdir()
 	store, err := New("tester", dir)
 	if err != nil {
@@ -102,9 +102,10 @@ func testStore(t *testing.T) (*BlockStore, string, error) {
 		return nil, dir, err
 	}
 	for i := 0; i < 10; i++ {
-		if err = store.Push([]byte(fmt.Sprintf("this is test %d", i))); err != nil {
+		b := block.New(nil, store.Head())
+		err = store.Push(b)
+		if err != nil {
 			t.Error(err)
-			return store, dir, err
 		}
 	}
 	return store, dir, nil

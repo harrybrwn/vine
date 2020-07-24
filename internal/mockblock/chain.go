@@ -7,7 +7,7 @@ import (
 	"github.com/harrybrwn/go-ledger/key"
 )
 
-// Chain is a blockchain
+// Chain is an in memory blockchain used for testing
 type Chain struct {
 	i      int
 	blocks []*block.Block
@@ -26,14 +26,6 @@ func NewChain(user key.Receiver) *Chain {
 	return c
 }
 
-// Tx is a top level object that
-// describes a transaction
-type Tx struct {
-	From   key.Sender
-	To     key.Receiver
-	Amount int64
-}
-
 func (c *Chain) append(blk *block.Block) {
 	for _, tx := range blk.Transactions {
 		c.txs[tx.StrID()] = tx
@@ -46,6 +38,16 @@ func (c *Chain) Transaction(id []byte) *block.Transaction {
 	if tx, ok := c.txs[hex.EncodeToString(id)]; ok {
 		return tx
 	}
+	return nil
+}
+
+func (c *Chain) Push(desc []block.TxDesc) (err error) {
+	// n := len(desc)
+	// txs := make([]*block.Transaction, n)
+	// stats := block.ChainStats(c.Iter())
+	// for i := 0; i < n; i++ {
+	// 	txs[i] = new(block.Transaction)
+	// }
 	return nil
 }
 

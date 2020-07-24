@@ -99,6 +99,10 @@ func join(a, b []byte) []byte {
 }
 
 func TestMerkleTree(t *testing.T) {
+	root := merkleroot([][]byte{})
+	if len(root) != 0 {
+		t.Error("no hashes should hash to zero length root")
+	}
 	pass1 := [][]byte{
 		h(join(h([]byte("one")), h([]byte("two")))),
 		h(join(h([]byte("three")), h([]byte("four")))),
@@ -131,7 +135,7 @@ func TestTransaction(t *testing.T) {
 	eq(s.bal(user2), 0)
 	eq(s.bal(user3), 0)
 
-	check(c.push([]txHead{{user1, user2, 10}}))
+	check(c.push([]TxDesc{{user1, user2, 10}}))
 	s = buildChainStats(c.Iter())
 	eq(s.bal(user1), 90)
 	eq(s.bal(user2), 10)
@@ -139,7 +143,7 @@ func TestTransaction(t *testing.T) {
 
 	// user1 pays 5  to user2
 	// user2 pays 10 to user3
-	check(c.push([]txHead{
+	check(c.push([]TxDesc{
 		{user1, user2, 5},
 		{user2, user3, 10},
 	}))
@@ -152,8 +156,8 @@ func TestTransaction(t *testing.T) {
 	tx := &Transaction{}
 	// user1 pays 25 to user2
 	// user3 pays 5  to user2
-	check(initTransaction(c, s, txHead{user3, user2, 5}, tx))
-	check(initTransaction(c, s, txHead{user1, user2, 25}, tx))
+	check(initTransaction(c, s, TxDesc{user3, user2, 5}, tx))
+	check(initTransaction(c, s, TxDesc{user1, user2, 25}, tx))
 	c.pushblock(tx)
 
 	s = buildChainStats(c.Iter())
@@ -250,7 +254,7 @@ func (c *chain) addTx(to key.Receiver, from key.Sender, amount int64) error {
 	err := initTransaction(
 		c,
 		buildChainStats(c.Iter()),
-		txHead{from: from, to: to, amount: amount},
+		TxDesc{From: from, To: to, Amount: amount},
 		tx,
 	)
 	if err != nil {
@@ -260,7 +264,7 @@ func (c *chain) addTx(to key.Receiver, from key.Sender, amount int64) error {
 	return nil
 }
 
-func (c *chain) push(heads []txHead) (err error) {
+func (c *chain) push(heads []TxDesc) (err error) {
 	var e error
 	n := len(heads)
 	txs := make([]*Transaction, n)
@@ -304,7 +308,8 @@ func (c *chain) Transaction(id []byte) *Transaction {
 func (c *chain) Push(data string) {
 	bytedata := []byte(data)
 	prev := c.blocks[len(c.blocks)-1]
-	c.append(prev.CreateNext(bytedata))
+	b := prev.CreateNext(bytedata)
+	c.append(b)
 }
 
 func (c *chain) Iter() Iterator {

@@ -9,7 +9,22 @@ import (
 	"github.com/pkg/errors"
 )
 
-var headKey = []byte("head")
+var (
+	headKey     = []byte("head")
+	blockPrefix = []byte("_block")
+	txPrefix    = []byte("_tx")
+)
+
+// CreateEmpty creates a new database file
+func CreateEmpty(dir string) error {
+	opts := badger.DefaultOptions(dir)
+	opts.Logger = nil
+	_, err := badger.Open(opts)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
 
 // New creates a new BlockStore
 func New(address string, dir string) (*BlockStore, error) {
@@ -34,7 +49,7 @@ func New(address string, dir string) (*BlockStore, error) {
 				return errors.WithStack(err)
 			}
 			store.head = genisis.Hash
-			return txn.Set(genisis.Hash, rawBlock)
+			return txn.Set(withBlockPrefix(genisis.Hash), rawBlock)
 		}
 
 		if err != nil {
@@ -54,35 +69,39 @@ type BlockStore struct {
 	head []byte
 }
 
-// Push will create a new block and push it onto the internal stack
-func (bs *BlockStore) Push(data []byte) error {
+// Push will add a block the the blockchain and update the
+// database head hash. If the block has not been mined, then
+// an error will be returned.
+func (bs *BlockStore) Push(blk *block.Block) error {
 	return bs.db.Update(func(txn *badger.Txn) error {
-		head := &block.Block{}
-		err := initBlock(txn, bs.head, head)
+		if !block.HasDoneWork(blk) {
+			return errors.New("block has not been mined")
+		}
+		raw, err := proto.Marshal(blk)
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		next := head.CreateNext(data)
-		raw, err := proto.Marshal(next)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		bs.head = next.Hash
-		return txn.Set(next.Hash, raw)
+		bs.head = blk.Hash
+		return txn.Set(withBlockPrefix(blk.Hash), raw)
 	})
 }
 
-// AddBlock will add a block with an array of transactions.
-func (bs *BlockStore) AddBlock(txs []*block.Transaction) error {
-	return bs.db.Update(func(txn *badger.Txn) error {
-		next := block.New(txs, bs.head)
-		raw, err := proto.Marshal(next)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		bs.head = next.Hash
-		return txn.Set(next.Hash, raw)
+// Head returns the head hash (the hash of the last block to be stored)
+func (bs *BlockStore) Head() []byte {
+	return bs.head
+}
+
+// HeadBlock will return the block stored at the head
+func (bs *BlockStore) HeadBlock() (*block.Block, error) {
+	var b *block.Block
+	return b, bs.db.View(func(txn *badger.Txn) error {
+		return initBlock(txn, bs.head, b)
 	})
+}
+
+func (bs *BlockStore) getHeadBlock(txn *badger.Txn) (*block.Block, error) {
+	head := &block.Block{}
+	return head, initBlock(txn, bs.head, head)
 }
 
 // CheckValid will traverse the list of blocks and check that
@@ -125,13 +144,31 @@ func (bs *BlockStore) CheckValid() (ok bool, err error) {
 // Transaction will get a transaction by id
 func (bs *BlockStore) Transaction(id []byte) *block.Transaction {
 	var (
-		it  = blockIter{next: bs.head, txn: bs.db.NewTransaction(false)}
+		tx  *block.Transaction
 		blk *block.Block
 	)
+	// First, check if the transaction has been saved
+	// in the database
+	err := bs.db.View(func(txn *badger.Txn) error {
+		itm, err := txn.Get(withTxPrefix(id))
+		if err != nil {
+			return err
+		}
+		return itm.Value(func(val []byte) error {
+			return proto.Unmarshal(val, tx)
+		})
+	})
+	if err == nil {
+		return tx
+	}
+
+	// If the transaction was not found in the database
+	// then we will iterate through all the blocks to find it
+	it := blockIter{next: bs.head, txn: bs.db.NewTransaction(false)}
 	defer it.Close()
 	for {
 		blk = it.Next()
-		for _, tx := range blk.Transactions {
+		for _, tx = range blk.Transactions {
 			if bytes.Compare(id, tx.ID) == 0 {
 				return tx
 			}
@@ -165,11 +202,12 @@ func (bs *BlockStore) Blocks() <-chan *block.Block {
 		key = b.PrevHash
 		return nil
 	}
+
 	go func() {
 		defer close(ch)
 		err := bs.db.View(func(txn *badger.Txn) error {
 			for len(key) != 0 {
-				itm, err := txn.Get(key)
+				itm, err := txn.Get(withBlockPrefix(key))
 				if err != nil {
 					return err
 				}
@@ -219,11 +257,19 @@ func (bs *BlockStore) Close() (err error) {
 }
 
 func initBlock(txn *badger.Txn, key []byte, b *block.Block) error {
-	item, err := txn.Get(key)
+	item, err := txn.Get(withBlockPrefix(key))
 	if err != nil {
 		return err
 	}
 	return item.Value(func(val []byte) error {
 		return proto.Unmarshal(val, b)
 	})
+}
+
+func withBlockPrefix(key []byte) []byte {
+	return bytes.Join([][]byte{blockPrefix, key}, nil)
+}
+
+func withTxPrefix(key []byte) []byte {
+	return bytes.Join([][]byte{txPrefix, key}, nil)
 }

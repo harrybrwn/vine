@@ -3,11 +3,13 @@ package block
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/harrybrwn/go-ledger/key"
@@ -42,12 +44,6 @@ func Coinbase(to string) *Transaction {
 	return tx
 }
 
-type txHead struct {
-	from   key.Sender
-	to     key.Receiver
-	amount int64
-}
-
 type chainStats struct {
 	// mapping of user addresses to user balances
 	balances map[string]int64
@@ -59,23 +55,40 @@ type chainStats struct {
 	utxo map[string][]*TxOutput
 }
 
-func initTransaction(finder TxFinder, stats *chainStats, header txHead, tx *Transaction) (err error) {
-	bal, spendable := stats.spendableTxOutputs(header.from.PubKeyHash(), header.amount)
-	err = tx.setInputs(header.from, spendable)
+// TxDesc describes a transaction at a high level
+type TxDesc struct {
+	From   key.Sender
+	To     key.Receiver
+	Amount int64
+}
+
+// NewTransaction creates a new transaction
+func NewTransaction(chain Chain, descriptor *TxDesc) (*Transaction, error) {
+	tx := new(Transaction)
+	err := initTransaction(
+		chain, buildChainStats(chain.Iter()),
+		*descriptor, tx,
+	)
+	return tx, err
+}
+
+func initTransaction(finder TxFinder, stats *chainStats, header TxDesc, tx *Transaction) (err error) {
+	bal, spendable := stats.spendableTxOutputs(header.From.PubKeyHash(), header.Amount)
+	err = tx.setInputs(header.From, spendable)
 	if err != nil {
 		return err
 	}
 	outs, err := newOutputs(
-		header.from, bal,
-		[]key.Receiver{header.to},
-		[]int64{header.amount},
+		header.From, bal,
+		[]key.Receiver{header.To},
+		[]int64{header.Amount},
 	)
 	if err != nil {
 		return err
 	}
 	tx.Outputs = append(tx.Outputs, outs...)
 	tx.ID = tx.hash()
-	return tx.Sign(header.from.PrivateKey(), finder)
+	return tx.Sign(header.From.PrivateKey(), finder)
 }
 
 func newOutputs(from key.Sender, balance int64, to []key.Receiver, amounts []int64) ([]*TxOutput, error) {
@@ -216,6 +229,7 @@ func (tx *Transaction) Sign(key *ecdsa.PrivateKey, find TxFinder) error {
 		txcp = proto.Clone(tx).(*Transaction)
 		prev *Transaction
 	)
+
 	for i, input := range txcp.Inputs {
 		prev = find.Transaction(input.TxID)
 		if prev == nil {
@@ -238,6 +252,49 @@ func (tx *Transaction) Sign(key *ecdsa.PrivateKey, find TxFinder) error {
 		txcp.Inputs[i].Signature = bytes.Join([][]byte{r.Bytes(), s.Bytes()}, nil)
 	}
 	return nil
+}
+
+// ErrInvalidSignature is the error value given when a transaction has
+// an invalid signature
+var ErrInvalidSignature = errors.New("invalid signature")
+
+// VerifySig will verify that a transaction has been correctly signed
+func (tx *Transaction) VerifySig(find TxFinder) error {
+	if tx.IsCoinbase() {
+		return nil
+	}
+	var (
+		txcp       = proto.Clone(tx).(*Transaction)
+		curve      = elliptic.P256()
+		prev       *Transaction
+		x, y, r, s *big.Int
+		pub        ecdsa.PublicKey
+		txHash     []byte
+	)
+
+	for _, input := range txcp.Inputs {
+		prev = find.Transaction(input.TxID)
+		input.Signature = nil
+		input.PubKey = prev.Outputs[input.OutIndex].PubKeyHash
+		txHash = txcp.hash()
+		input.PubKey = nil
+
+		r, s = splitBytes(input.Signature)
+		x, y = splitBytes(input.PubKey)
+		pub = ecdsa.PublicKey{Curve: curve, X: x, Y: y}
+		if !ecdsa.Verify(&pub, txHash, r, s) {
+			return ErrInvalidSignature
+		}
+	}
+	return nil
+}
+
+func splitBytes(buf []byte) (x, y *big.Int) {
+	l := len(buf)
+	x, y = &big.Int{}, &big.Int{}
+	x.SetBytes(buf[:l/2])
+	y.SetBytes(buf[l/2:])
+	return
 }
 
 func (tx *Transaction) setInputs(sender key.Sender, spendable map[string][]int) error {
@@ -270,6 +327,9 @@ func (tx *Transaction) StrID() string {
 }
 
 func txMerkleRoot(txs []*Transaction) ([]byte, error) {
+	if len(txs) < 0 {
+		return nil, nil
+	}
 	hashes := make([][]byte, 0, len(txs))
 	hash := sha256.New()
 	for _, tx := range txs {

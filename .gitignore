@@ -5,3 +5,10 @@ notes.txt
 # Misc
 *.mp4
 *.pdf
+
+# Binaries
+blk
+blkmine
+
+# Temporary Hidden
+/internal/config

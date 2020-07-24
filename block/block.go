@@ -82,8 +82,16 @@ func (b *Block) CreateNext(data []byte) *Block {
 	return block
 }
 
+// ChainStats returns a blockchain metadata object
+func ChainStats(it Iterator) *chainStats {
+	return buildChainStats(it)
+}
+
 func merkleroot(hashes [][]byte) []byte {
 	n := len(hashes)
+	if n < 1 {
+		return nil
+	}
 	if n == 1 {
 		return hashes[0]
 	}
