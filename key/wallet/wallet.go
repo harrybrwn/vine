@@ -2,7 +2,10 @@ package wallet
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
+	"encoding/gob"
+	"io"
 
 	"github.com/harrybrwn/go-ledger/key"
 	"github.com/mr-tron/base58"
@@ -88,6 +91,41 @@ func ValidAddress(address string) bool {
 // the wallet's public key
 func (w *Wallet) PubKeyHash() []byte {
 	return w.pub.Hash()
+}
+
+// WriteTo will serialize the wallet and write it to an io.Writer
+func (w *Wallet) WriteTo(wr io.Writer) (int64, error) {
+	type wallet struct {
+		Pub  key.PubKey
+		Priv *ecdsa.PrivateKey
+		V    byte
+	}
+	wlt := wallet{Pub: w.pub, Priv: w.priv, V: w.version}
+	return 0, gob.NewEncoder(wr).Encode(&wlt)
+}
+
+func init() {
+	// k := ecdsa.PublicKey{Curve: elliptic.P256()}
+	// gob.Register(k.Curve)
+	gob.Register(elliptic.P256())
+}
+
+// ReadFrom will populate the wallet data by reading from an io.Reader
+func (w *Wallet) ReadFrom(r io.Reader) (int64, error) {
+	type wallet struct {
+		Pub  key.PubKey
+		Priv *ecdsa.PrivateKey
+		V    byte
+	}
+	wlt := wallet{}
+	err := gob.NewDecoder(r).Decode(&wlt)
+	if err != nil {
+		return 0, err
+	}
+	w.pub = wlt.Pub
+	w.priv = wlt.Priv
+	w.version = wlt.V
+	return 0, nil
 }
 
 func checksum(b []byte) []byte {

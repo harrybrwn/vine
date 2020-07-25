@@ -62,8 +62,13 @@ type TxDesc struct {
 	Amount int64
 }
 
+type receiver struct {
+	to     key.Receiver
+	amount int64
+}
+
 // NewTransaction creates a new transaction
-func NewTransaction(chain Chain, descriptor *TxDesc) (*Transaction, error) {
+func NewTransaction(chain Chain, stats *chainStats, descriptor *TxDesc) (*Transaction, error) {
 	tx := new(Transaction)
 	err := initTransaction(
 		chain, buildChainStats(chain.Iter()),
@@ -72,7 +77,12 @@ func NewTransaction(chain Chain, descriptor *TxDesc) (*Transaction, error) {
 	return tx, err
 }
 
-func initTransaction(finder TxFinder, stats *chainStats, header TxDesc, tx *Transaction) (err error) {
+func initTransaction(
+	finder TxFinder,
+	stats *chainStats,
+	header TxDesc,
+	tx *Transaction,
+) (err error) {
 	bal, spendable := stats.spendableTxOutputs(header.From.PubKeyHash(), header.Amount)
 	err = tx.setInputs(header.From, spendable)
 	if err != nil {
@@ -80,8 +90,7 @@ func initTransaction(finder TxFinder, stats *chainStats, header TxDesc, tx *Tran
 	}
 	outs, err := newOutputs(
 		header.From, bal,
-		[]key.Receiver{header.To},
-		[]int64{header.Amount},
+		[]receiver{{header.To, header.Amount}},
 	)
 	if err != nil {
 		return err
@@ -91,20 +100,20 @@ func initTransaction(finder TxFinder, stats *chainStats, header TxDesc, tx *Tran
 	return tx.Sign(header.From.PrivateKey(), finder)
 }
 
-func newOutputs(from key.Sender, balance int64, to []key.Receiver, amounts []int64) ([]*TxOutput, error) {
-	n := len(to)
-	if len(amounts) != n {
-		return nil, errors.New("number of receivers does not match number of amounts")
-	}
+func newOutputs(from key.Sender, balance int64, recv []receiver) ([]*TxOutput, error) {
+	n := len(recv)
+	// if len(amounts) != n {
+	// 	return nil, errors.New("number of receivers does not match number of amounts")
+	// }
 	outs := make([]*TxOutput, 0, n)
 	for i := 0; i < n; i++ {
-		balance -= amounts[i]
+		balance -= recv[i].amount
 		if balance < 0 {
 			return nil, ErrNotEnoughFunds
 		}
 		outs = append(outs, &TxOutput{
-			Amount:     amounts[i],
-			PubKeyHash: to[i].PubKeyHash(),
+			Amount:     recv[i].amount,
+			PubKeyHash: recv[i].to.PubKeyHash(),
 		})
 	}
 	if balance > 0 {
@@ -146,6 +155,7 @@ func buildChainStats(it Iterator) *chainStats {
 				if _, ok := s.balances[userkey]; !ok {
 					s.balances[userkey] = 0
 				}
+				// fmt.Println(userkey, s.balances[userkey], "+", out.Amount)
 				s.balances[userkey] += out.Amount
 				s.unspent = append(s.unspent, tx)
 				s.utxo[userkey] = append(s.utxo[userkey], out)
@@ -171,7 +181,7 @@ func (sts *chainStats) markSpent(txid []byte, index int) {
 	sts.spent[id] = append(sts.spent[id], index)
 }
 
-func (sts *chainStats) bal(user key.Receiver) (bal int64) {
+func (sts *chainStats) Bal(user key.Receiver) (bal int64) {
 	pubkh := key.ExtractPubKeyHash(user.Address())
 	key := hex.EncodeToString(pubkh)
 	for _, out := range sts.utxo[key] {
@@ -181,6 +191,10 @@ func (sts *chainStats) bal(user key.Receiver) (bal int64) {
 		panic("this is a test: should have gotten the same result")
 	}
 	return bal
+}
+
+func (sts *chainStats) UserUTXO(user key.Receiver) []*TxOutput {
+	return sts.utxo[hex.EncodeToString(user.PubKeyHash())]
 }
 
 func (sts *chainStats) txOutputIsSpent(txid string, index int) bool {

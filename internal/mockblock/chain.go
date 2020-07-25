@@ -10,7 +10,7 @@ import (
 // Chain is an in memory blockchain used for testing
 type Chain struct {
 	i      int
-	blocks []*block.Block
+	Blocks []*block.Block
 	txs    map[string]*block.Transaction
 }
 
@@ -19,7 +19,7 @@ func NewChain(user key.Receiver) *Chain {
 	c := &Chain{
 		i:      1,
 		txs:    make(map[string]*block.Transaction),
-		blocks: []*block.Block{},
+		Blocks: []*block.Block{},
 	}
 	b := block.Genisis(block.Coinbase(user.Address()))
 	c.append(b)
@@ -30,7 +30,7 @@ func (c *Chain) append(blk *block.Block) {
 	for _, tx := range blk.Transactions {
 		c.txs[tx.StrID()] = tx
 	}
-	c.blocks = append(c.blocks, blk)
+	c.Blocks = append(c.Blocks, blk)
 }
 
 // Transaction will get a transaction
@@ -41,19 +41,26 @@ func (c *Chain) Transaction(id []byte) *block.Transaction {
 	return nil
 }
 
+// Push a list of transactions onto the blockchain as a new block
 func (c *Chain) Push(desc []block.TxDesc) (err error) {
-	// n := len(desc)
-	// txs := make([]*block.Transaction, n)
-	// stats := block.ChainStats(c.Iter())
-	// for i := 0; i < n; i++ {
-	// 	txs[i] = new(block.Transaction)
-	// }
-	return nil
+	var e error
+	n := len(desc)
+	txs := make([]*block.Transaction, n)
+	stats := block.ChainStats(c.Iter())
+	for i := 0; i < n; i++ {
+		txs[i], e = block.NewTransaction(c, stats, &desc[i])
+		if e != nil && err == nil {
+			err = e
+		}
+	}
+	blk := block.New(txs, c.tophash())
+	c.append(blk)
+	return
 }
 
 // Iter returns a block iterator
 func (c *Chain) Iter() block.Iterator {
-	c.i = len(c.blocks) - 1
+	c.i = len(c.Blocks) - 1
 	return c
 }
 
@@ -62,11 +69,11 @@ func (c *Chain) Next() *block.Block {
 	if c.i < 0 {
 		return nil
 	}
-	b := c.blocks[c.i]
+	b := c.Blocks[c.i]
 	c.i--
 	return b
 }
 
 func (c *Chain) tophash() []byte {
-	return c.blocks[len(c.blocks)-1].Hash
+	return c.Blocks[len(c.Blocks)-1].Hash
 }
