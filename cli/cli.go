@@ -17,6 +17,7 @@ func NewBLK() *cobra.Command {
 	c.AddCommand(
 		newInitBlockStoreCmd(),
 		newSyncCmd(),
+		newWalletCmd(),
 	)
 	return c
 }
