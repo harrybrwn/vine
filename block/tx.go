@@ -17,8 +17,7 @@ import (
 
 // UTXO holds unspent transaction outputs.
 type UTXO interface {
-	Bal(key.Addressable) int64
-	Add(key.Receiver, ...*TxOutput)
+	Bal(key.Address) int64
 }
 
 var coinbaseValue int64 = 100
@@ -70,10 +69,7 @@ type receiver struct {
 // NewTransaction creates a new transaction
 func NewTransaction(chain Chain, stats *chainStats, descriptor *TxDesc) (*Transaction, error) {
 	tx := new(Transaction)
-	err := initTransaction(
-		chain, buildChainStats(chain.Iter()),
-		*descriptor, tx,
-	)
+	err := initTransaction(chain, stats, *descriptor, tx)
 	return tx, err
 }
 
@@ -102,9 +98,6 @@ func initTransaction(
 
 func newOutputs(from key.Sender, balance int64, recv []receiver) ([]*TxOutput, error) {
 	n := len(recv)
-	// if len(amounts) != n {
-	// 	return nil, errors.New("number of receivers does not match number of amounts")
-	// }
 	outs := make([]*TxOutput, 0, n)
 	for i := 0; i < n; i++ {
 		balance -= recv[i].amount
@@ -289,8 +282,10 @@ func (tx *Transaction) VerifySig(find TxFinder) error {
 	for _, input := range txcp.Inputs {
 		prev = find.Transaction(input.TxID)
 		input.Signature = nil
+		// set the public key to get the correct transaction hash
 		input.PubKey = prev.Outputs[input.OutIndex].PubKeyHash
 		txHash = txcp.hash()
+		// reset the public key after hashing
 		input.PubKey = nil
 
 		r, s = splitBytes(input.Signature)
