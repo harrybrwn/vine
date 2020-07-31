@@ -1,14 +1,16 @@
-# Notes
-TODO*
-notes.txt
-
 # Misc
 *.mp4
 *.pdf
 
-# Binaries
+# Build
 blk
 blkmine
+/vendor
 
 # Temporary Hidden
-/internal/config
+build
+
+# Drafting
+/draft
+TODO*
+notes.txt

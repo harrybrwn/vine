@@ -85,14 +85,6 @@ func hashBlockE(difficulty hashDifficulty, nonce int64, block Provable) ([]byte,
 	if err = errs.Pair(err1, err2); err != nil {
 		return hash.Sum(nil), err
 	}
-	// add all the transactions
-	// for _, tx := range block.GetTransactions() {
-	// raw, _ := proto.Marshal(tx)
-	// if err != nil {
-	// return hash.Sum(nil), err
-	// }
-	// hash.Write(raw)
-	// }
 	merkleRoot, err := txMerkleRoot(block.GetTransactions())
 	if err != nil {
 		return nil, err
@@ -109,11 +101,6 @@ func hashBlock(difficulty hashDifficulty, nonce int64, block Provable) []byte {
 	var hash = sha256.New()
 	binary.Write(hash, binary.BigEndian, difficulty)
 	binary.Write(hash, binary.BigEndian, nonce)
-	// add all the transactions
-	// for _, tx := range block.GetTransactions() {
-	// raw, _ := proto.Marshal(tx)
-	// hash.Write(raw)
-	// }
 	merkleRoot, _ := txMerkleRoot(block.GetTransactions())
 	hash.Write(merkleRoot)
 	hash.Write(block.GetData())

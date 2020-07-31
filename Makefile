@@ -5,12 +5,17 @@ install:
 	go install ./cmd/blk
 
 clean:
-	@#find . -name '*.pb.go' -type f -exec rm "{}" \;
-	$(RM) ./blk ./blkmine
+	$(RM) ./blk ./blkmine blk-arm blk-darwin
 	go clean -i ./cmd/blk
 
 build:
 	go generate ./...
 	go build ./cmd/blk
+
+build-arm:
+	GOARCH=arm GOARM=6 go build -o blk-arm ./cmd/blk
+
+build-darwin:
+	GOOS=darwin go build -o blk-darwin ./cmd/blk
 
 .PHONY: clean
