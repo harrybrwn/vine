@@ -220,12 +220,14 @@ func findKey(val reflect.Value, keyPath []string) (bool, *reflect.StructField, r
 				return ok, structField, value
 			}
 			if isZero(value) {
-				deflt := typFld.Tag.Get("default")
+				// priority goes to env variables
 				env := typFld.Tag.Get("env")
+				if env != "" {
+					return true, &typFld, typedDefaultValue(&typFld, os.Getenv(env))
+				}
+				deflt := typFld.Tag.Get("default")
 				if deflt != "" {
 					return true, &typFld, typedDefaultValue(&typFld, deflt)
-				} else if env != "" {
-					return true, &typFld, typedDefaultValue(&typFld, os.Getenv(env))
 				}
 			}
 			return true, &typFld, value
