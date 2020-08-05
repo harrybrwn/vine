@@ -31,7 +31,7 @@ func TestNewBlockStore(t *testing.T) {
 		t.Error(err)
 	}
 
-	store, err = New("tester", dir)
+	store, err = New(addr("tester"), dir)
 	if err != nil {
 		t.Error(err)
 	}
@@ -96,7 +96,7 @@ func TestUpdateStore(t *testing.T) {
 func testStore(t *testing.T) (*BlockStore, string, error) {
 	t.Helper()
 	dir := tempdir()
-	store, err := New("tester", dir)
+	store, err := New(addr("tester"), dir)
 	if err != nil {
 		t.Error(err)
 		return nil, dir, err
@@ -109,6 +109,12 @@ func testStore(t *testing.T) (*BlockStore, string, error) {
 		}
 	}
 	return store, dir, nil
+}
+
+type addr string
+
+func (a addr) Address() string {
+	return string(a)
 }
 
 func tempdir() string {

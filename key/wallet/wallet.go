@@ -14,13 +14,24 @@ import (
 // Version1 is address version 1
 const Version1 byte = 0x00
 
-// New creates a new wallet
-func New(version byte) *Wallet {
+// New creates a new wallet with the default version.
+func New() *Wallet {
 	pub, priv := key.GenPair()
 	return &Wallet{
 		pub:     pub,
 		priv:    priv,
-		version: version,
+		version: Version1,
+	}
+}
+
+// Versioned will create a new wallet with a given
+// version number.
+func Versioned(v byte) *Wallet {
+	pub, priv := key.GenPair()
+	return &Wallet{
+		pub:     pub,
+		priv:    priv,
+		version: v,
 	}
 }
 
@@ -105,8 +116,6 @@ func (w *Wallet) WriteTo(wr io.Writer) (int64, error) {
 }
 
 func init() {
-	// k := ecdsa.PublicKey{Curve: elliptic.P256()}
-	// gob.Register(k.Curve)
 	gob.Register(elliptic.P256())
 }
 

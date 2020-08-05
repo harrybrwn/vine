@@ -21,7 +21,7 @@ func NewChain(user key.Receiver) *Chain {
 		txs:    make(map[string]*block.Transaction),
 		Blocks: []*block.Block{},
 	}
-	b := block.Genisis(block.Coinbase(user.Address()))
+	b := block.Genisis(block.Coinbase(user))
 	c.append(b)
 	return c
 }

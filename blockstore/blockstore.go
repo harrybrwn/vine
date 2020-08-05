@@ -6,6 +6,7 @@ import (
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/golang/protobuf/proto"
 	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-ledger/key"
 	"github.com/pkg/errors"
 )
 
@@ -27,7 +28,7 @@ func CreateEmpty(dir string) error {
 }
 
 // New creates a new BlockStore
-func New(address string, dir string) (*BlockStore, error) {
+func New(address key.Address, dir string) (*BlockStore, error) {
 	opts := badger.DefaultOptions(dir)
 	opts.Logger = nil
 	db, err := badger.Open(opts)
@@ -69,20 +70,52 @@ type BlockStore struct {
 	head []byte
 }
 
+// ErrBlockNotMined is returned when a block has not
+// been mined when it should have been
+var ErrBlockNotMined = errors.New("block has not been mined")
+
 // Push will add a block the the blockchain and update the
 // database head hash. If the block has not been mined, then
 // an error will be returned.
 func (bs *BlockStore) Push(blk *block.Block) error {
 	return bs.db.Update(func(txn *badger.Txn) error {
-		if !block.HasDoneWork(blk) {
-			return errors.New("block has not been mined")
+		return bs.setBlock(blk, txn)
+	})
+}
+
+// PushBlocks adds a list of blocks to the chain.
+func (bs *BlockStore) PushBlocks(blocks []*block.Block) error {
+	return bs.db.Update(func(txn *badger.Txn) error {
+		for _, blk := range blocks {
+			err := bs.setBlock(blk, txn)
+			if err != nil {
+				return err
+			}
 		}
-		raw, err := proto.Marshal(blk)
-		if err != nil {
-			return errors.WithStack(err)
-		}
+		return nil
+	})
+}
+
+func (bs *BlockStore) setBlock(blk *block.Block, txn *badger.Txn) error {
+	if !block.HasDoneWork(blk) {
+		return ErrBlockNotMined
+	}
+	raw, err := proto.Marshal(blk)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	err = txn.Set(withBlockPrefix(blk.Hash), raw)
+	if err == nil {
 		bs.head = blk.Hash
-		return txn.Set(withBlockPrefix(blk.Hash), raw)
+	}
+	return err
+}
+
+// Get will return a block given the block's hash as a key
+func (bs *BlockStore) Get(hash []byte) (*block.Block, error) {
+	blk := new(block.Block)
+	return blk, bs.db.View(func(txn *badger.Txn) error {
+		return initBlock(txn, hash, blk)
 	})
 }
 
@@ -93,7 +126,7 @@ func (bs *BlockStore) Head() []byte {
 
 // HeadBlock will return the block stored at the head
 func (bs *BlockStore) HeadBlock() (*block.Block, error) {
-	var b *block.Block
+	b := new(block.Block)
 	return b, bs.db.View(func(txn *badger.Txn) error {
 		return initBlock(txn, bs.head, b)
 	})

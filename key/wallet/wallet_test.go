@@ -11,7 +11,7 @@ import (
 )
 
 func TestWallet(t *testing.T) {
-	w := New(Version1)
+	w := New()
 	addr := w.Address()
 	if addr[0] != '1' {
 		t.Error("wrong version")
@@ -30,7 +30,7 @@ func TestWallet(t *testing.T) {
 
 func Test(t *testing.T) {
 	t.Skip("only for temporary testing")
-	w := New(Version1)
+	w := New()
 	pubkh := w.PubKeyHash()
 
 	var b [25]byte

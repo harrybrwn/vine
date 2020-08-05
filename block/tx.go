@@ -23,7 +23,7 @@ type UTXO interface {
 var coinbaseValue int64 = 100
 
 // Coinbase will create a coinbase transaction.
-func Coinbase(to string) *Transaction {
+func Coinbase(to key.Address) *Transaction {
 	tx := &Transaction{
 		Inputs: []*TxInput{
 			{
@@ -35,7 +35,7 @@ func Coinbase(to string) *Transaction {
 		Outputs: []*TxOutput{
 			{
 				Amount:     coinbaseValue,
-				PubKeyHash: key.ExtractPubKeyHash(to),
+				PubKeyHash: key.ExtractPubKeyHash(to.Address()),
 			},
 		},
 	}
@@ -244,8 +244,10 @@ func (tx *Transaction) Sign(key *ecdsa.PrivateKey, find TxFinder) error {
 		}
 		input.Signature = nil
 		if int(input.OutIndex) >= len(txcp.Outputs) {
+			// TODO: fix this, at least with good error handling
 			fmt.Println("outindex:", input.OutIndex, ", input len:", len(txcp.Outputs))
 			fmt.Println(hex.EncodeToString(prev.ID), "=>", hex.EncodeToString(txcp.ID))
+			panic("transaction output index is out of range: wtf is going on")
 			return errors.New("invalid transaction output index")
 		}
 
@@ -256,7 +258,7 @@ func (tx *Transaction) Sign(key *ecdsa.PrivateKey, find TxFinder) error {
 		if err != nil {
 			return err
 		}
-		txcp.Inputs[i].Signature = bytes.Join([][]byte{r.Bytes(), s.Bytes()}, nil)
+		tx.Inputs[i].Signature = bytes.Join([][]byte{r.Bytes(), s.Bytes()}, nil)
 	}
 	return nil
 }
@@ -279,14 +281,14 @@ func (tx *Transaction) VerifySig(find TxFinder) error {
 		txHash     []byte
 	)
 
-	for _, input := range txcp.Inputs {
+	for i, input := range tx.Inputs {
 		prev = find.Transaction(input.TxID)
-		input.Signature = nil
+		txcp.Inputs[i].Signature = nil
 		// set the public key to get the correct transaction hash
-		input.PubKey = prev.Outputs[input.OutIndex].PubKeyHash
+		txcp.Inputs[i].PubKey = prev.Outputs[input.OutIndex].PubKeyHash
 		txHash = txcp.hash()
 		// reset the public key after hashing
-		input.PubKey = nil
+		txcp.Inputs[i].PubKey = nil
 
 		r, s = splitBytes(input.Signature)
 		x, y = splitBytes(input.PubKey)

@@ -4,7 +4,8 @@ import (
 	"path/filepath"
 
 	"github.com/harrybrwn/go-ledger/blockstore"
-	"github.com/pkg/errors"
+	"github.com/harrybrwn/go-ledger/internal/config"
+	"github.com/harrybrwn/go-ledger/key/wallet"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +19,7 @@ func newInitBlockStoreCmd() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			confdir := configDir()
+			confdir := config.GetString("config")
 			if err = mkdir(confdir); err != nil {
 				return err
 			}
@@ -29,10 +30,12 @@ func newInitBlockStoreCmd() *cobra.Command {
 			if err = mkdir(filepath.Join(confdir, "wallets")); err != nil {
 				return err
 			}
-			return errors.Wrap(
-				blockstore.CreateEmpty(storageDir),
-				"could not create blockstore",
-			)
+			user := wallet.New()
+			store, err := blockstore.New(user, storageDir)
+			if err != nil {
+				return err
+			}
+			return store.Close()
 		},
 	}
 	flags := c.Flags()

@@ -1,25 +1,33 @@
 package cli
 
 import (
+	"context"
+	"crypto/rand"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 
+	"github.com/harrybrwn/errs"
 	"github.com/harrybrwn/go-ledger/internal/config"
 	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/nsf/termbox-go"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
 func newWalletCmd() *cobra.Command {
-	var delete bool
+	var delete string
 	c := &cobra.Command{
 		Use:   "wallet",
 		Short: "Manage public and private keys",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			walletDir := filepath.Join(configDir(), "wallets")
+			walletDir := filepath.Join(config.GetString("config"), "wallets")
 			if len(args) == 0 {
 				files, err := ioutil.ReadDir(walletDir)
 				if err != nil {
@@ -30,36 +38,27 @@ func newWalletCmd() *cobra.Command {
 				}
 			}
 
-			var (
-				filename string
-				wlt      *wallet.Wallet = new(wallet.Wallet)
-			)
+			if delete != "" {
+				filename := filepath.Join(walletDir, delete)
+				return os.Remove(filename)
+			}
 			for _, arg := range args {
-				filename = filepath.Join(walletDir, arg)
-				if delete {
-					if err := os.Remove(filename); err != nil {
-						return err
-					}
-					continue
-				}
-				file, err := os.Open(filename)
+				key, err := openKey(arg)
 				if err != nil {
 					return err
 				}
-				if _, err = wlt.ReadFrom(file); err != nil {
+				pub, err := key.GetPublic().Bytes()
+				if err != nil {
 					return err
 				}
-				cmd.Printf("%s: %s\n", arg, wlt.Address())
-				if err = file.Close(); err != nil {
-					return err
-				}
+				fmt.Printf("%s: %x\n", arg, pub)
 			}
 			return nil
 		},
 	}
 
 	flags := c.Flags()
-	flags.BoolVarP(&delete, "delete", "d", delete, "Delete a wallet key pair")
+	flags.StringVarP(&delete, "delete", "d", delete, "Delete a wallet key pair")
 
 	c.AddCommand(&cobra.Command{
 		Use:   "gen-pair <name>",
@@ -68,17 +67,50 @@ func newWalletCmd() *cobra.Command {
 			if len(args) < 1 {
 				return errors.New("no wallet name given")
 			}
-			walletFile := filepath.Join(configDir(), "wallets", args[0])
+			walletFile := filepath.Join(config.GetString("config"), "wallets", args[0])
 			file, err := os.Create(walletFile)
 			if err != nil {
 				return errors.Wrap(err, "could not create wallet file")
 			}
-			wlt := wallet.New(wallet.Version1)
-			_, err = wlt.WriteTo(file)
+			defer file.Close()
+
+			priv, _, err := crypto.GenerateECDSAKeyPairWithCurve(crypto.ECDSACurve, rand.Reader)
+			if err != nil {
+				return errors.Wrap(err, "could not generate ECDSA key pair")
+			}
+			raw, err := priv.Raw()
+			if err != nil {
+				return err
+			}
+			_, err = file.Write(raw)
 			return err
 		},
 	})
 	return c
+}
+
+func openKey(name string) (crypto.PrivKey, error) {
+	file := filepath.Join(config.GetString("config"), "wallets", name)
+	raw, err := ioutil.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	return crypto.UnmarshalECDSAPrivateKey(raw)
+}
+
+func openWallet(name string) (*wallet.Wallet, error) {
+	walletfile := filepath.Join(config.GetString("config"), "wallets", name)
+	file, err := os.Open(walletfile)
+	if err != nil {
+		return nil, err
+	}
+	wlt := &wallet.Wallet{}
+	_, err = wlt.ReadFrom(file)
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return wlt, file.Close()
 }
 
 func newConfigCmd() *cobra.Command {
@@ -112,7 +144,7 @@ func newConfigCmd() *cobra.Command {
 				ex.Stdin = cmd.InOrStdin()
 				return ex.Run()
 			}
-			return nil
+			return cmd.Help()
 		},
 	}
 
@@ -130,4 +162,162 @@ func newConfigCmd() *cobra.Command {
 	flags.BoolVarP(&file, "file", "f", file, "print the filepath of the configuration file")
 	flags.BoolVarP(&dir, "dir", "d", dir, "print the path of the configuration folder")
 	return c
+}
+
+func newLogCmd() *cobra.Command {
+	var (
+		file, reset bool
+		less        bool
+		num         int
+		level       string
+	)
+	c := &cobra.Command{
+		Use:           "logs",
+		Short:         "Manage logs and log files",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			if file {
+				fmt.Println(LogFile.Filename)
+				return nil
+			}
+			if reset {
+				return os.Remove(LogFile.Filename)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var proc *exec.Cmd
+			if less {
+				proc = exec.CommandContext(ctx, "less", LogFile.Filename)
+				proc.Stdout = cmd.OutOrStdout()
+				return proc.Run()
+			}
+			proc = exec.CommandContext(ctx, "tail", "-F", LogFile.Filename, "-n", strconv.Itoa(num))
+			proc.Stderr, proc.Stdin = cmd.ErrOrStderr(), cmd.InOrStdin()
+
+			copy := io.Copy
+			if config.GetBool("nocolor") {
+				copy = copyNoColor
+			}
+
+			pipe, err := proc.StdoutPipe()
+			if err != nil {
+				return err
+			}
+			defer pipe.Close()
+			if err = proc.Start(); err != nil {
+				return err
+			}
+
+			go copy(os.Stdout, pipe)
+
+			err = proc.Wait()
+			if e, ok := err.(*exec.ExitError); ok && e.Error() == "signal: killed" {
+				return proc.Process.Release()
+			}
+			return err
+		},
+	}
+
+	flags := c.Flags()
+	flags.BoolVarP(&file, "file", "f", file, "print the path of the logfile")
+	flags.BoolVarP(&reset, "reset", "r", reset, "reset the logfile")
+	flags.IntVarP(&num, "num", "n", 20, "number of lines of log file shown")
+	flags.BoolVar(&less, "less", less, "run less to look at the logs")
+	flags.StringVar(&level, "level", level, "filter out the logs at a certain level")
+	return c
+}
+
+var colorRegex = regexp.MustCompile("[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]")
+
+// yes, i copied this from io.Copy in the io package
+func copyNoColor(dest io.Writer, src io.Reader) (written int64, err error) {
+	return copyFilter(dest, src, func(b []byte) []byte {
+		return colorRegex.ReplaceAll(b, nil)
+	})
+}
+
+func copyFilter(dest io.Writer, src io.Reader, filter func([]byte) []byte) (written int64, err error) {
+	buf := make([]byte, 32*1024)
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dest.Write(filter(buf[0:nr]))
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if ew != nil {
+				err = ew
+				break
+			}
+			// TODO: predict what the difference will be here
+			if nr != nw {
+				err = io.ErrShortWrite
+				// break
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				err = er
+			}
+			break
+		}
+	}
+	return
+}
+
+// use like this...
+//
+//	if err := termbox.Init(); err != nil {
+// 		return err
+//	}
+//	go keypoll(cancel)
+func keypoll(cancel func()) {
+	defer func() {
+		cancel()
+		termbox.Close()
+	}()
+	for {
+		event := termbox.PollEvent()
+		switch event.Type {
+		case termbox.EventKey:
+			if event.Ch == 'q' {
+				return
+			}
+		case termbox.EventError:
+			return
+		}
+	}
+}
+
+func newCompletionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "completion",
+		Short: "Print a completion script to stdout.",
+		Long: `Use the completion command to generate a script for shell
+completion. Note: for zsh you will need to use the command
+'compdef _edu edu' after you source the generated script.`,
+		Example:   "$ source <(edu completion zsh)",
+		ValidArgs: []string{"zsh", "bash", "ps", "powershell", "fish"},
+		Aliases:   []string{"comp"},
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			root := cmd.Root()
+			out := cmd.OutOrStdout()
+			if len(args) == 0 {
+				return errors.New("no shell type given")
+			}
+			switch args[0] {
+			case "zsh":
+				return root.GenZshCompletion(out)
+			case "ps", "powershell":
+				return root.GenPowerShellCompletion(out)
+			case "bash":
+				return root.GenBashCompletion(out)
+			case "fish":
+				return root.GenFishCompletion(out, false)
+			}
+			return errs.New("unknown shell type")
+		},
+	}
 }

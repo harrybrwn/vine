@@ -154,14 +154,15 @@ func GetString(key string) string {
 }
 
 // GetString will get the config value by name and
-// return it as a string
+// return it as a string. This function will also expand
+// any environment variables in the value returned.
 func (c *Config) GetString(key string) string {
 	keys := strings.Split(key, ".")
 	ok, _, val := findKey(reflect.ValueOf(c.config).Elem(), keys)
 	if !ok {
 		return ""
 	}
-	return val.String()
+	return os.ExpandEnv(val.String())
 }
 
 // GetInt will get the int value of a key
@@ -222,12 +223,11 @@ func findKey(val reflect.Value, keyPath []string) (bool, *reflect.StructField, r
 			if isZero(value) {
 				// priority goes to env variables
 				env := typFld.Tag.Get("env")
-				if env != "" {
-					return true, &typFld, typedDefaultValue(&typFld, os.Getenv(env))
-				}
 				deflt := typFld.Tag.Get("default")
-				if deflt != "" {
-					return true, &typFld, typedDefaultValue(&typFld, deflt)
+				if env != "" {
+					value = typedDefaultValue(&typFld, os.Getenv(env))
+				} else if deflt != "" {
+					value = typedDefaultValue(&typFld, deflt)
 				}
 			}
 			return true, &typFld, value

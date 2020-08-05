@@ -9,7 +9,7 @@ import (
 )
 
 func TestTx(t *testing.T) {
-	user1, user2 := wallet.New(0x0), wallet.New(0x0)
+	user1, user2 := wallet.New(), wallet.New()
 	// fmt.Println("user1:", hex.EncodeToString(user1.PubKeyHash()))
 	// fmt.Println("user2:", hex.EncodeToString(user2.PubKeyHash()))
 	// println()

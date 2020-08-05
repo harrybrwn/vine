@@ -14,11 +14,12 @@ import (
 )
 
 func init() {
-	difficulty = 6
+	// difficulty = 6
+	difficulty = 16
 }
 
 func TestBlock(t *testing.T) {
-	addr := wallet.New(wallet.Version1)
+	addr := wallet.New()
 	c := newChain(addr)
 	c.Push("1")
 	if len(c.blocks) != 2 {
@@ -38,7 +39,7 @@ func TestBlock(t *testing.T) {
 }
 
 func TestPOW(t *testing.T) {
-	addr := wallet.New(wallet.Version1).Address()
+	addr := wallet.New()
 	block := New(
 		[]*Transaction{Coinbase(addr)},
 		[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9},
@@ -62,8 +63,8 @@ func TestPOW(t *testing.T) {
 
 func TestBuildStats(t *testing.T) {
 	eq, check := helpers(t)
-	harry := wallet.New(wallet.Version1)
-	jim := wallet.New(wallet.Version1)
+	harry := wallet.New()
+	jim := wallet.New()
 	keyharry := hex.EncodeToString(harry.PubKeyHash())
 	keyjim := hex.EncodeToString(jim.PubKeyHash())
 	c := newChain(harry)
@@ -94,9 +95,7 @@ func h(hash []byte) []byte {
 	res := sha256.Sum256(hash)
 	return res[:]
 }
-func join(a, b []byte) []byte {
-	return bytes.Join([][]byte{a, b}, nil)
-}
+func join(a, b []byte) []byte { return bytes.Join([][]byte{a, b}, nil) }
 
 func TestMerkleTree(t *testing.T) {
 	root := merkleroot([][]byte{})
@@ -128,7 +127,7 @@ func TestMerkleTree(t *testing.T) {
 
 func Test(t *testing.T) {
 	eq, check := helpers(t)
-	user1, user2, user3 := wallet.New(0x0), wallet.New(0x0), wallet.New(0x0)
+	user1, user2, user3 := wallet.New(), wallet.New(), wallet.New()
 	fmt.Println("user1:", hex.EncodeToString(user1.PubKeyHash()))
 	fmt.Println("user2:", hex.EncodeToString(user2.PubKeyHash()))
 	fmt.Println("user3:", hex.EncodeToString(user3.PubKeyHash()))
@@ -165,7 +164,7 @@ func Test(t *testing.T) {
 
 func TestTransaction(t *testing.T) {
 	eq, check := helpers(t)
-	user1, user2, user3 := wallet.New(0x0), wallet.New(0x0), wallet.New(0x0)
+	user1, user2, user3 := wallet.New(), wallet.New(), wallet.New()
 	c := newChain(user1)
 	s := buildChainStats(c.Iter())
 	eq(s.Bal(user1), coinbaseValue)
@@ -227,6 +226,39 @@ func TestTransaction(t *testing.T) {
 	// eq(s.bal(user4), 100)
 }
 
+func TestTxSign(t *testing.T) {
+	u1, u2 := wallet.New(), wallet.New()
+	c := newChain(u1)
+	err := c.push([]TxDesc{
+		{u1, u2, 50},
+	})
+	if err != nil {
+		t.Error(err)
+	}
+
+	stats := buildChainStats(c.Iter())
+	tx, err := NewTransaction(c, stats, &TxDesc{u2, u1, 10})
+	if err != nil {
+		t.Error(err)
+	}
+
+	// b := tx.hash()
+	// fmt.Printf("%x\n", b)
+	// r, s, err := ecdsa.Sign(rand.Reader, u1.PrivateKey(), b)
+	// fmt.Printf("%x\n", bytes.Join([][]byte{r.Bytes(), s.Bytes()}, nil))
+
+	fmt.Printf("%x\n", tx.hash())
+	err = tx.Sign(u2.PrivateKey(), c)
+	if err != nil {
+		t.Error(err)
+	}
+	fmt.Printf("%x\n", tx.hash())
+	err = tx.VerifySig(c)
+	if err != nil {
+		t.Error(err)
+	}
+}
+
 func eq(t *testing.T, a, b interface{}) {
 	t.Helper()
 	av, bv := reflect.ValueOf(a), reflect.ValueOf(b)
@@ -270,8 +302,10 @@ func newChain(user key.Receiver) *chain {
 		txs:    make(map[string]*Transaction),
 		blocks: []*Block{},
 	}
-	b := Genisis(Coinbase(user.Address()))
-	c.append(b)
+	if user != nil {
+		b := Genisis(Coinbase(user))
+		c.append(b)
+	}
 	return c
 }
 
@@ -375,7 +409,7 @@ func (c *chain) Next() *Block {
 // TODO: find out how long it takes to
 // solve the concensus algorithm, tweak to get 10 mins
 func BenchmarkPOW(b *testing.B) {
-	blk := Genisis(Coinbase(""))
+	blk := Genisis(Coinbase(address("test")))
 	difficulty = 16
 	for n := 0; n < b.N; n++ {
 		// difficulty = hashDifficulty(n)
@@ -413,7 +447,7 @@ func TestRPC(t *testing.T) {
 	}
 
 	// tests below are for test coverage... sorry
-	tx := Coinbase(t.Name())
+	tx := Coinbase(address(t.Name()))
 	if len(tx.GetID()) == 0 || len(tx.ID) == 0 {
 		t.Error("transaction has no ID")
 	}
@@ -434,4 +468,10 @@ func TestRPC(t *testing.T) {
 	if len(tx.GetOutputs()) != 0 {
 		t.Error("tx should have no outputs")
 	}
+}
+
+type address string
+
+func (a address) Address() string {
+	return string(a)
 }

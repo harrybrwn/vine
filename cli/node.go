@@ -1,20 +1,28 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
-	"path"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/harrybrwn/go-ledger/blockstore"
+	"github.com/harrybrwn/go-ledger/internal/config"
+	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/harrybrwn/go-ledger/node"
 	"github.com/harrybrwn/go-ledger/p2p"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/protocol"
+	p2pconfig "github.com/libp2p/go-libp2p/config"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -30,12 +38,12 @@ func newSendCmd() *cobra.Command {
 				return newCommandErr("no messages", cmd)
 			}
 			ctx := context.Background()
-			node, err := libp2p.New(ctx, libp2p.NoListenAddrs)
+			h, err := libp2p.New(ctx, libp2p.NoListenAddrs)
 			if err != nil {
 				return err
 			}
-			fmt.Println(node.ID().Pretty())
-			ch, err := p2p.DiscoverOnce(node.ID(), discoveryTag)
+			fmt.Println(h.ID().Pretty())
+			ch, err := p2p.DiscoverOnce(h.ID(), node.DiscoveryTag)
 			if err != nil {
 				return err
 			}
@@ -43,11 +51,11 @@ func newSendCmd() *cobra.Command {
 			for pa := range ch {
 				go func(peer peer.AddrInfo) {
 					fmt.Println("connecting to", peer.ID.Pretty())
-					if err := node.Connect(ctx, peer); err != nil {
+					if err := h.Connect(ctx, peer); err != nil {
 						log.Printf("Could not connect to %s: %v", peer.ID.Pretty(), err)
 						return
 					}
-					s, err := node.NewStream(ctx, peer.ID, "/msg")
+					s, err := h.NewStream(ctx, peer.ID, "/msg")
 					if err != nil {
 						log.Println("Could not create stream:", err)
 						return
@@ -70,43 +78,98 @@ func newSyncCmd() *cobra.Command {
 	return c
 }
 
-func newTestCmd() *cobra.Command {
+func newPeersCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:    "test",
-		Hidden: true,
+		Use:   "peers",
+		Short: "Get info on the peers connected",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
-			node, err := libp2p.New(
-				ctx,
-				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
-			)
+			opts := []p2pconfig.Option{libp2p.NoListenAddrs}
+			walletName := config.GetString("wallet")
+			if walletName != "" {
+				key, err := openKey(walletName)
+				if err == nil {
+					opts = append(opts, libp2p.Identity(key))
+				} else {
+					log.Warn(err)
+				}
+			}
+			host, err := libp2p.New(ctx, opts...)
 			if err != nil {
 				return err
 			}
-			fmt.Println(node.ID().Pretty())
+			fmt.Println("me:", host.ID().Pretty())
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
-			ch, err := p2p.StartDiscovery(ctx, node, discoveryTag, time.Second)
+			ch, err := p2p.DiscoverOnce(host.ID(), node.DiscoveryTag)
 			if err != nil {
 				return err
 			}
 
 			for pa := range ch {
-				if err := node.Connect(context.Background(), pa); err != nil {
+				fmt.Println(pa)
+			}
+			return nil
+		},
+	}
+	return c
+}
+
+func newTestCmd() *cobra.Command {
+	var hit string
+	c := &cobra.Command{
+		Use:    "test",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts := []p2pconfig.Option{
+				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+			}
+			walletName := config.GetString("wallet")
+			if walletName != "" {
+				key, err := openKey(walletName)
+				if err == nil {
+					opts = append(opts, libp2p.Identity(key))
+				} else {
+					log.Warn(err)
+				}
+			}
+
+			ctx := context.Background()
+			host, err := libp2p.New(ctx, opts...)
+			if err != nil {
+				return err
+			}
+			fmt.Println(host.ID().Pretty())
+
+			ctx, cancel := context.WithTimeout(ctx, time.Second*5)
+			defer cancel()
+			ch, err := p2p.DiscoverOnce(host.ID(), node.DiscoveryTag)
+			if err != nil {
+				return err
+			}
+			if len(args) > 0 && hit == "" {
+				hit = args[0]
+				args = args[1:]
+			}
+			if hit == "" {
+				return errors.New("no endpoint to hit")
+			}
+
+			for pa := range ch {
+				if err := host.Connect(ctx, pa); err != nil {
 					log.Error("Could not connect:", err)
 					continue
 				}
-				s, err := node.NewStream(ctx, pa.ID, protocol.ID("/blk/block/"+node.ID().Pretty()))
+				s, err := host.NewStream(ctx, pa.ID, protocol.ID(hit))
 				if err != nil {
-					log.Error("could not create stream:", err)
+					log.Error(err)
 					continue
 				}
-				// stop when the first stream is successful
-				cancel()
-				fmt.Print("reading from stream: ")
 				io.Copy(os.Stdout, s)
 				s.Close()
+				cancel()
 				println()
+				return nil
 			}
 			return nil
 		},
@@ -116,94 +179,79 @@ func newTestCmd() *cobra.Command {
 
 func newDaemonCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "daemon",
-		Short: "Start a daemon",
+		Use:           "daemon",
+		Short:         "Start the daemon",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pid := os.Getpid()
 			ctx, stop := context.WithCancel(context.Background())
 			defer stop()
-			node, err := libp2p.New(
-				ctx,
+			opts := []libp2p.Option{
 				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
-			)
+			}
+			walletname := config.GetString("wallet")
+			if walletname != "" {
+				key, err := openKey(walletname)
+				if err == nil {
+					opts = append(opts, libp2p.Identity(key))
+				} else {
+					log.Warn(err)
+				}
+			}
+
+			host, err := libp2p.New(ctx, opts...)
+			if err != nil {
+				return err
+			}
+			defer host.Close()
+
+			termSigs := make(chan os.Signal)
+			signal.Notify(termSigs, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-termSigs
+				fmt.Print("\r") // hide the '^C'
+				log.Info("Shutting down...")
+
+				host.Close()
+				time.Sleep(time.Second) // hey man, this makes it look cool ok, don't judge
+
+				log.Info("Graceful shutdown successful.")
+				os.Exit(0)
+			}()
+
+			// for testing
+			host.SetStreamHandler("/msg", func(s network.Stream) {
+				buf := new(bytes.Buffer)
+				io.Copy(buf, s)
+				log.Info(buf.String())
+			})
+
+			pid := os.Getpid()
+			fmt.Println(pid, host.ID())
+			log.WithFields(log.Fields{
+				"pid":  pid,
+				"node": host.ID().Pretty(),
+			}).Infof("Starting full node")
+
+			store, err := blockstore.New(wallet.New(), filepath.Join(config.GetString("config"), "blocks"))
+			if err != nil {
+				return err
+			}
+			node, err := node.FullNode(ctx, host, store)
 			if err != nil {
 				return err
 			}
 			defer node.Close()
 
-			fmt.Println(pid, node.ID())
-			log.Infof("Starting daemon from pid=%d, node=%s", pid, node.ID().Pretty())
-			return startDaemon(ctx, node)
+			select {
+			case <-ctx.Done():
+				host.Close()
+				return nil
+			}
 		},
 	}
 	return c
 }
 
-var (
-	discoveryTag = "blk-discovery._tcp"
-	discoverTime = time.Second * 15
-)
-
-const peerIDLen = 46
-
-func startDaemon(ctx context.Context, node host.Host) error {
-	node.SetStreamHandler("/msg", func(s network.Stream) {
-		// for testing
-		io.Copy(os.Stdout, s)
-	})
-	node.SetStreamHandler("/blk/head", func(s network.Stream) {
-		// response for nodes getting the first block
-	})
-	node.SetStreamHandlerMatch(
-		"/blk/block",
-		matchIDLen(peerIDLen),
-		handleBlockReqStream,
-	)
-
-	discCtx, stopDiscovery := context.WithCancel(ctx)
-	defer stopDiscovery()
-	ch, err := p2p.StartDiscovery(discCtx, node, discoveryTag, discoverTime)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		net := node.Network()
-		for addr := range ch {
-			if net.Connectedness(addr.ID) == network.Connected {
-				continue
-			}
-			fmt.Println("connecting to", addr.ID)
-			if err := node.Connect(ctx, addr); err != nil {
-				log.Warn("could not connect:", err)
-			}
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return nil
-	}
-}
-
-func handleBlockReqStream(stream network.Stream) {
-	path, blkID := path.Split(string(stream.Protocol()))
-	fmt.Fprintf(stream, `%s{"blockID": %s, "block": null}`, path, blkID)
-	stream.Close()
-}
-
-func matchIDLen(l int) func(string) bool {
-	return func(s string) bool {
-		_, id := path.Split(s)
-		if len(id) == l {
-			return true
-		}
-		return false
-	}
-}
-
-type notifeeFunc func(peer.AddrInfo)
-
-func (nf notifeeFunc) HandlePeerFound(p peer.AddrInfo) {
-	nf(p)
+func handleInterupt() {
 }

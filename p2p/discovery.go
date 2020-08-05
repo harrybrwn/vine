@@ -57,9 +57,6 @@ func StartDiscovery(
 				log.Debugf("mDNS entry to peer address failed: %v", err)
 				continue
 			}
-			if peerAddr.ID == self.ID() {
-				continue
-			}
 			ch <- *peerAddr
 		}
 	}()
