@@ -118,8 +118,10 @@ func newPeersCmd() *cobra.Command {
 func newTestCmd() *cobra.Command {
 	var hit string
 	c := &cobra.Command{
-		Use:    "test",
-		Hidden: true,
+		Use:           "test",
+		Hidden:        true,
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := []p2pconfig.Option{
 				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
@@ -162,16 +164,16 @@ func newTestCmd() *cobra.Command {
 				}
 				s, err := host.NewStream(ctx, pa.ID, protocol.ID(hit))
 				if err != nil {
-					log.Error(err)
-					continue
+					return errors.Wrap(err, "could not create stream")
 				}
+
 				io.Copy(os.Stdout, s)
 				s.Close()
 				cancel()
 				println()
 				return nil
 			}
-			return nil
+			return fmt.Errorf("could not find '%s'", hit)
 		},
 	}
 	return c
@@ -195,7 +197,7 @@ func newDaemonCmd() *cobra.Command {
 				if err == nil {
 					opts = append(opts, libp2p.Identity(key))
 				} else {
-					log.Warn(err)
+					log.WithError(err).Warn("could not open wallet")
 				}
 			}
 
@@ -207,17 +209,6 @@ func newDaemonCmd() *cobra.Command {
 
 			termSigs := make(chan os.Signal)
 			signal.Notify(termSigs, os.Interrupt, syscall.SIGTERM)
-			go func() {
-				<-termSigs
-				fmt.Print("\r") // hide the '^C'
-				log.Info("Shutting down...")
-
-				host.Close()
-				time.Sleep(time.Second) // hey man, this makes it look cool ok, don't judge
-
-				log.Info("Graceful shutdown successful.")
-				os.Exit(0)
-			}()
 
 			// for testing
 			host.SetStreamHandler("/msg", func(s network.Stream) {
@@ -245,7 +236,12 @@ func newDaemonCmd() *cobra.Command {
 
 			select {
 			case <-ctx.Done():
-				host.Close()
+				return ctx.Err()
+			case <-termSigs:
+				fmt.Print("\r") // hide the '^C'
+				log.Info("Shutting down...")
+				time.Sleep(time.Second / 2) // hey man, this makes it look cool ok, don't judge
+				log.Info("Graceful shutdown successful.")
 				return nil
 			}
 		},

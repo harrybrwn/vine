@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package node;
+
+option go_package = "github.com/harrybrwn/go-ledger/node;node";
+
+import "block/block.proto";
+
+message BlockRequest {
+    string Sender = 1;
+    block.Block Block  = 2;
+}

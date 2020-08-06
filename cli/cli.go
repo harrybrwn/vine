@@ -34,10 +34,12 @@ func NewBLK() *cobra.Command {
 		Config: configDir(),
 	}
 
+	config.AddPath("$BLK_CONFIG")
 	config.AddPath(conf.Config)
+	config.AddDefaultDirs("blk")
 	config.SetFilename("config.yml")
 	config.SetType("yaml")
-	config.SetStruct(conf)
+	config.SetConfig(conf)
 	err := config.ReadConfigFile()
 	if err == config.ErrNoConfigFile {
 		if err = mkdir(conf.Config); err != nil {

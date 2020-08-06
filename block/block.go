@@ -1,4 +1,4 @@
-//go:generate protoc --go_out=. block.proto
+//go:generate protoc -I. -I.. --go_out=paths=source_relative:. ./block.proto
 
 package block
 

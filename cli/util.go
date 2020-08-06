@@ -7,7 +7,6 @@ import (
 
 var (
 	configDirName = "blk"
-	tmpUser       = false
 )
 
 func configDir() string {
@@ -23,10 +22,6 @@ func configDir() string {
 	}
 	if dir == "" {
 		dir = "./.blk"
-	}
-	if tmpUser {
-		dir = filepath.Join(dir, "tmp")
-		mkdir(dir)
 	}
 	return dir
 }

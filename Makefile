@@ -1,11 +1,11 @@
-block/block.pb.go: block/block.proto
-	protoc --go_out=./block $<
-
-install:
+install: block/block.pb.go node/node.pb.go
 	go install ./cmd/blk
 
+%.pb.go: %.proto
+	go generate ./...
+
 clean:
-	$(RM) ./blk ./blkmine blk-arm blk-darwin
+	$(RM) ./blk ./blkmine blk-arm blk-darwin $(shell find . -name '*.pb.go')
 	go clean -i ./cmd/blk
 
 build:
