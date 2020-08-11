@@ -47,6 +47,9 @@ func NewBLK(version string) *cobra.Command {
 		f.Close()
 		err = e
 	}
+	if config.GetString("config") == "" {
+		conf.Config = dir
+	}
 
 	c := &cobra.Command{
 		Use:   "blk",

@@ -209,7 +209,7 @@ func newConfigCmd() *cobra.Command {
 				return nil
 			}
 			if dir {
-				fmt.Println(filepath.Dir(f))
+				fmt.Println(config.DirUsed())
 				return nil
 			}
 
