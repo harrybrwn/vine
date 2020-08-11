@@ -10,40 +10,38 @@ import (
 	"github.com/harrybrwn/go-ledger/internal/config"
 	"github.com/harrybrwn/go-ledger/internal/logging"
 	log "github.com/sirupsen/logrus"
-	"github.com/sirupsen/logrus/hooks/writer"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Config is the command line configuration structure
 type Config struct {
-	Wallet string `yaml:"wallet"`
+	Wallet string `yaml:"wallet" default:"default"`
 	Editor string `yaml:"editor" env:"EDITOR"`
 	// LogLevel will set the log level for all logs that are
 	// written to standard out
-	LogLevel string `yaml:"loglevel" default:"warn"`
+	LogLevel string `yaml:"loglevel" default:"info"`
 	NoColor  bool   `yaml:"nocolor"`
-
 	// Config is the config directory used for the cli
 	Config string `yaml:"config" env:"BLK_CONFIG"`
 }
 
 // NewBLK returns a new 'blk' root command
-func NewBLK() *cobra.Command {
-	conf := &Config{
-		Config: configDir(),
-	}
-
+func NewBLK(version string) *cobra.Command {
 	config.AddPath("$BLK_CONFIG")
-	config.AddPath(conf.Config)
 	config.AddDefaultDirs("blk")
 	config.SetFilename("config.yml")
 	config.SetType("yaml")
+
+	conf := &Config{}
 	config.SetConfig(conf)
+	log.SetReportCaller(false)
+
 	err := config.ReadConfigFile()
+	dir := config.DirUsed()
 	if err == config.ErrNoConfigFile {
-		if err = mkdir(conf.Config); err != nil {
-			log.WithError(err).Error("could not create config directory")
+		if err = mkdir(dir); err != nil {
+			log.WithError(err).Errorf("could not create config directory '%s'", config.DirUsed())
 		}
 		f, e := os.OpenFile(config.FileUsed(), os.O_CREATE, 0600)
 		f.Close()
@@ -59,13 +57,14 @@ This is in very early stages of development and a public node
 should not be run. Trade currency on this blockchain at your own
 risk, as of 2020 there is a high risk of being overpowered by a
 51% attack.`,
-		SilenceUsage:  false,
-		SilenceErrors: false,
+		Version:       version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return cliPreRun(conf)
+			return cliPreRun(dir, conf)
 		},
 		PersistentPostRunE: func(*cobra.Command, []string) error { return nil },
 	}
@@ -103,9 +102,10 @@ var LogFile = &lumberjack.Logger{
 	Compress:   false,
 }
 
-func cliPreRun(conf *Config) error {
-	LogFile.Filename = filepath.Join(conf.Config, "blk.log")
-	format := &log.TextFormatter{
+func cliPreRun(dir string, conf *Config) error {
+	LogFile.Filename = filepath.Join(dir, "blk.log")
+
+	var format log.Formatter = &log.TextFormatter{
 		ForceColors:            !conf.NoColor,
 		DisableColors:          conf.NoColor,
 		DisableLevelTruncation: true,
@@ -113,11 +113,10 @@ func cliPreRun(conf *Config) error {
 		FullTimestamp:          true,
 		TimestampFormat:        time.Stamp,
 		PadLevelText:           false,
-		FieldMap: log.FieldMap{
-			"time":   "@timestamp",
-			"level":  "@level",
-			"poopoo": "peepee",
-		},
+	}
+	format = &logging.PrefixedFormatter{
+		TimeFormat: time.RFC3339,
+		Prefix:     "",
 	}
 	stdlog.SetOutput(LogFile)
 	log.SetOutput(ioutil.Discard)
@@ -130,7 +129,7 @@ func cliPreRun(conf *Config) error {
 		level = log.WarnLevel
 	}
 	log.SetLevel(log.TraceLevel)
-	log.AddHook(&writer.Hook{
+	log.AddHook(&logging.Hook{
 		Writer:    os.Stdout,
 		LogLevels: log.AllLevels[:level+1],
 	})

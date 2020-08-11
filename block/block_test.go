@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -14,8 +15,42 @@ import (
 )
 
 func init() {
-	// difficulty = 6
-	difficulty = 16
+	difficulty = 6
+	// difficulty = 16
+}
+
+type testUser struct {
+	*wallet.Wallet
+	N int
+}
+
+func users(n int) []*testUser {
+	u := []*testUser{}
+	for i := 0; i < n; i++ {
+		u = append(u, &testUser{N: i, Wallet: wallet.New()})
+	}
+	return u
+}
+
+func Test(t *testing.T) {
+	// eq, check := helpers(t)
+	user := users(5)
+	// c := newChain(user[0])
+	tx := []*Transaction{
+		{
+			Inputs:  []*TxInput{{TxID: nil, OutIndex: -1, Signature: nil}},
+			Outputs: []*TxOutput{{Amount: 50, PubKeyHash: user[4].PubKeyHash()}},
+		},
+		{
+			Inputs: []*TxInput{{OutIndex: 0, PubKey: user[0].PublicKey()}},
+			Outputs: []*TxOutput{
+				{Amount: 5, PubKeyHash: user[1].PubKeyHash()},
+				{Amount: 10, PubKeyHash: user[2].PubKeyHash()},
+				{Amount: 25, PubKeyHash: user[4].PubKeyHash()},
+			},
+		},
+	}
+	tx[0].ID = tx[0].hash()
 }
 
 func TestBlock(t *testing.T) {
@@ -125,43 +160,6 @@ func TestMerkleTree(t *testing.T) {
 	}
 }
 
-func Test(t *testing.T) {
-	eq, check := helpers(t)
-	user1, user2, user3 := wallet.New(), wallet.New(), wallet.New()
-	fmt.Println("user1:", hex.EncodeToString(user1.PubKeyHash()))
-	fmt.Println("user2:", hex.EncodeToString(user2.PubKeyHash()))
-	fmt.Println("user3:", hex.EncodeToString(user3.PubKeyHash()))
-	println()
-
-	c := newChain(user1)
-	stats := buildChainStats(c.Iter())
-	fmt.Println(stats.UserUTXO(user1))
-
-	tx := new(Transaction)
-	bal, spendable := stats.spendableTxOutputs(user1.PubKeyHash(), 0)
-	fmt.Println(bal, spendable)
-	check(tx.setInputs(user1, spendable))
-	outs, err := newOutputs(
-		user1, bal,
-		[]receiver{{user2, 10}, {user1, 7}},
-	)
-	check(err)
-	tx.Outputs = append(tx.Outputs, outs...)
-	tx.ID = tx.hash()
-	check(tx.Sign(user1.PrivateKey(), c))
-	c.pushblock(tx)
-
-	println()
-	stats = buildChainStats(c.Iter())
-	for _, x := range stats.UserUTXO(user1) {
-		fmt.Printf("%x %d\n", x.PubKeyHash, x.Amount)
-	}
-	fmt.Println(stats.Bal(user1))
-
-	// check(c.push([]TxDesc{{user1, user3, 10}}))
-	eq(1, 1)
-}
-
 func TestTransaction(t *testing.T) {
 	eq, check := helpers(t)
 	user1, user2, user3 := wallet.New(), wallet.New(), wallet.New()
@@ -227,36 +225,6 @@ func TestTransaction(t *testing.T) {
 }
 
 func TestTxSign(t *testing.T) {
-	u1, u2 := wallet.New(), wallet.New()
-	c := newChain(u1)
-	err := c.push([]TxDesc{
-		{u1, u2, 50},
-	})
-	if err != nil {
-		t.Error(err)
-	}
-
-	stats := buildChainStats(c.Iter())
-	tx, err := NewTransaction(c, stats, &TxDesc{u2, u1, 10})
-	if err != nil {
-		t.Error(err)
-	}
-
-	// b := tx.hash()
-	// fmt.Printf("%x\n", b)
-	// r, s, err := ecdsa.Sign(rand.Reader, u1.PrivateKey(), b)
-	// fmt.Printf("%x\n", bytes.Join([][]byte{r.Bytes(), s.Bytes()}, nil))
-
-	fmt.Printf("%x\n", tx.hash())
-	err = tx.Sign(u2.PrivateKey(), c)
-	if err != nil {
-		t.Error(err)
-	}
-	fmt.Printf("%x\n", tx.hash())
-	err = tx.VerifySig(c)
-	if err != nil {
-		t.Error(err)
-	}
 }
 
 func eq(t *testing.T, a, b interface{}) {
@@ -346,8 +314,6 @@ func (c *chain) push(heads []TxDesc) (err error) {
 		k := head.From.Address()
 		recv[k] = append(recv[k], txReceiver{head.To, head.Amount})
 	}
-	// for addr, receivers := range recv {
-	// }
 
 	txs = make([]*Transaction, n)
 	for i = 0; i < n; i++ {
@@ -359,6 +325,20 @@ func (c *chain) push(heads []TxDesc) (err error) {
 	blk := New(txs, c.tophash())
 	c.append(blk)
 	return
+}
+
+// Get will get a block given it's hash
+func (c *chain) Get(h []byte) (*Block, error) {
+	for _, blk := range c.blocks {
+		if bytes.Compare(h, blk.Hash) == 0 {
+			return blk, nil
+		}
+	}
+	return nil, errors.New("could not find block")
+}
+
+func (c *chain) Head() (*Block, error) {
+	return c.blocks[len(c.blocks)-1], nil
 }
 
 func (c *chain) pushblock(txs ...*Transaction) {

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,13 +12,96 @@ import (
 	"strconv"
 
 	"github.com/harrybrwn/errs"
+	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-ledger/blockstore"
 	"github.com/harrybrwn/go-ledger/internal/config"
 	"github.com/harrybrwn/go-ledger/key/wallet"
 	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/nsf/termbox-go"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
+
+func initConfigDir(confdir string) (err error) {
+	if err = mkdir(confdir); err != nil {
+		return err
+	}
+	if err = mkdir(filepath.Join(confdir, "blocks")); err != nil {
+		return err
+	}
+	if err = mkdir(filepath.Join(confdir, "wallets")); err != nil {
+		return err
+	}
+	return nil
+}
+
+func newInitBlockStoreCmd() *cobra.Command {
+	var (
+		address     string
+		withGenisis bool
+	)
+	c := &cobra.Command{
+		Use:           "init",
+		Short:         "Initialize a new blockchain",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			confdir := config.GetString("config")
+			storageDir := filepath.Join(confdir, "blocks")
+			if err = initConfigDir(confdir); err != nil {
+				return err
+			}
+
+			var (
+				name = config.GetString("wallet")
+				w    *wallet.Wallet
+			)
+			if name == "" {
+				return errors.New("no wallet")
+			} else if name == "default" {
+				w = wallet.New()
+			} else {
+				w, err = openWallet(name)
+				if err != nil {
+					return err
+				}
+			}
+			defer writeWallet(name, w)
+
+			if withGenisis {
+				db, err := blockstore.Open(storageDir)
+				if err != nil {
+					return nil
+				}
+				defer func() {
+					e := db.Close()
+					if err == nil {
+						err = e
+					}
+				}()
+				// if the head block exists then return
+				if hash := db.HeadHash(); hash != nil {
+					return nil
+				}
+				blk := block.Genisis(block.Coinbase(w))
+				return db.Push(blk)
+			}
+			err = blockstore.CreateEmpty(storageDir)
+			if err != nil {
+				return err
+			}
+			log.Trace("block database created")
+			return nil
+		},
+	}
+	flags := c.Flags()
+	flags.StringVar(&address, "address", "", "Address name as it appears in the wallet")
+	flags.BoolVar(&withGenisis, "with-genisis", false, "create the data with a new coinbase transaction")
+	flags.MarkHidden("with-coinbase")
+	return c
+}
 
 func newWalletCmd() *cobra.Command {
 	var delete string
@@ -43,15 +125,12 @@ func newWalletCmd() *cobra.Command {
 				return os.Remove(filename)
 			}
 			for _, arg := range args {
-				key, err := openKey(arg)
+				w, err := openWallet(arg)
 				if err != nil {
 					return err
 				}
-				pub, err := key.GetPublic().Bytes()
-				if err != nil {
-					return err
-				}
-				fmt.Printf("%s: %x\n", arg, pub)
+				id, _ := peer.IDFromPrivateKey(w.PrivKey())
+				fmt.Printf("%s: %s %x\n", arg, id.Pretty(), w.Address())
 			}
 			return nil
 		},
@@ -67,23 +146,11 @@ func newWalletCmd() *cobra.Command {
 			if len(args) < 1 {
 				return errors.New("no wallet name given")
 			}
-			walletFile := filepath.Join(config.GetString("config"), "wallets", args[0])
-			file, err := os.Create(walletFile)
+			err := writeWallet(args[0], wallet.New())
 			if err != nil {
 				return errors.Wrap(err, "could not create wallet file")
 			}
-			defer file.Close()
-
-			priv, _, err := crypto.GenerateECDSAKeyPairWithCurve(crypto.ECDSACurve, rand.Reader)
-			if err != nil {
-				return errors.Wrap(err, "could not generate ECDSA key pair")
-			}
-			raw, err := priv.Raw()
-			if err != nil {
-				return err
-			}
-			_, err = file.Write(raw)
-			return err
+			return nil
 		},
 	})
 	return c
@@ -101,6 +168,9 @@ func openKey(name string) (crypto.PrivKey, error) {
 func openWallet(name string) (*wallet.Wallet, error) {
 	walletfile := filepath.Join(config.GetString("config"), "wallets", name)
 	file, err := os.Open(walletfile)
+	if os.IsNotExist(err) {
+		return wallet.New(), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -108,9 +178,22 @@ func openWallet(name string) (*wallet.Wallet, error) {
 	_, err = wlt.ReadFrom(file)
 	if err != nil {
 		file.Close()
-		return nil, err
+		return nil, errors.Wrap(err, "failed to read wallet file")
 	}
 	return wlt, file.Close()
+}
+
+func writeWallet(name string, w *wallet.Wallet) error {
+	dir := filepath.Join(config.GetString("config"), "wallets")
+	os.MkdirAll(dir, 0700)
+	file, err := os.Create(filepath.Join(dir, name))
+	if err != nil {
+		log.WithError(err).Warn("could not create wallet file")
+		return err
+	}
+	defer file.Close()
+	_, err = w.WriteTo(file)
+	return errors.Wrap(err, "could not write wallet to file")
 }
 
 func newConfigCmd() *cobra.Command {

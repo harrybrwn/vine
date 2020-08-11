@@ -7,8 +7,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+var version string
+
 func main() {
-	cmd := cli.NewBLK()
+	cmd := cli.NewBLK(version)
 	if err := cmd.Execute(); err != nil {
 		switch e := err.(type) {
 		case *cli.CommandError:

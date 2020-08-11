@@ -7,6 +7,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// Logger is a basic logger
+type Logger interface {
+	Errorf(string, ...interface{})
+	Warningf(string, ...interface{})
+	Infof(string, ...interface{})
+	Debugf(string, ...interface{})
+}
+
 // Copy returns a copy of the logrus standar logger
 func Copy() *logrus.Logger {
 	l := logrus.StandardLogger()
@@ -48,3 +56,79 @@ func (lf *logfilehook) Fire(e *log.Entry) error {
 	_, err = lf.file.Write(b)
 	return err
 }
+
+// NewMaybeLogger creates a new logger from an existing
+// one that can safely be nil without panicing
+func NewMaybeLogger(log Logger) Logger {
+	return &MaybeLogger{log}
+}
+
+// MaybeLogger is a logger that can hold a nil logger internally
+type MaybeLogger struct {
+	log Logger
+}
+
+// Errorf reports an error
+func (ml *MaybeLogger) Errorf(s string, v ...interface{}) {
+	if ml.log != nil {
+		ml.log.Errorf(s, v...)
+	}
+}
+
+// Warningf reports a warning
+func (ml *MaybeLogger) Warningf(s string, v ...interface{}) {
+	if ml.log != nil {
+		ml.log.Warningf(s, v...)
+	}
+}
+
+// Infof reports info
+func (ml *MaybeLogger) Infof(s string, v ...interface{}) {
+	if ml.log != nil {
+		ml.log.Infof(s, v...)
+	}
+}
+
+// Debugf reports debugging info
+func (ml *MaybeLogger) Debugf(s string, v ...interface{}) {
+	if ml.log != nil {
+		ml.log.Debugf(s, v...)
+	}
+}
+
+// Hook is a generic logging hook... Stolen from the logrus
+type Hook struct {
+	Writer    io.Writer
+	LogLevels []log.Level
+}
+
+// Fire will be called when some logging function is called with current hook
+// It will format log entry to string and write it to appropriate writer
+func (hook *Hook) Fire(entry *log.Entry) error {
+	line, err := entry.Bytes()
+	if err != nil {
+		return err
+	}
+	_, err = hook.Writer.Write(line)
+	return err
+}
+
+// Levels define on which log levels this hook would trigger
+func (hook *Hook) Levels() []log.Level {
+	return hook.LogLevels
+}
+
+// This is the ioutil.Discard of loggers
+type discardLogger struct{}
+
+// Errorf does nothing
+func Errorf(string, ...interface{}) {}
+
+// Warningf does nothing
+func Warningf(string, ...interface{}) {}
+
+// Infof does nothing
+func Infof(string, ...interface{}) {}
+
+// Debugf does nothing
+func Debugf(string, ...interface{}) {}

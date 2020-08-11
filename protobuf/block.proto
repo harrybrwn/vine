@@ -7,7 +7,6 @@ option go_package = "github.com/harrybrwn/go-ledger/block;block";
 message Block {
     bytes Data  = 1;
     repeated Transaction Transactions = 2;
-
     int64 Nonce    = 3;
     bytes Hash     = 4;
     bytes PrevHash = 5;
@@ -31,7 +30,7 @@ message TxInput {
     // Signature is the digital signature of
     // the sender
     bytes Signature = 3;
-    // Public key
+    // Public key of the sender
     bytes PubKey = 4;
 }
 

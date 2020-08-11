@@ -182,12 +182,16 @@ func FileUsed() string { return c.FileUsed() }
 // FileUsed will return the file used for
 // configuration.
 func (c *Config) FileUsed() string {
-	dir := c.DirUsed()
-	if dir == "" {
-		return ""
+	var err error
+	for _, path := range c.paths {
+		if _, err = os.Stat(path); !os.IsNotExist(err) {
+			return filepath.Join(path, c.file)
+		}
 	}
-	return filepath.Join(dir, c.file)
+	return ""
 }
+
+func Paths() []string { return c.paths }
 
 // DirUsed returns the path of the first existing
 // config directory.
@@ -199,6 +203,11 @@ func (c *Config) DirUsed() string {
 	var err error
 	for _, path := range c.paths {
 		if _, err = os.Stat(path); !os.IsNotExist(err) {
+			return path
+		}
+	}
+	for _, path := range c.paths {
+		if path != "" {
 			return path
 		}
 	}

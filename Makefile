@@ -1,21 +1,33 @@
-install: block/block.pb.go node/node.pb.go
-	go install ./cmd/blk
+VERSION=$(shell git describe --tags --abbrev=0)-$(shell git rev-parse --short HEAD)
+GOFLAGS=-ldflags "-w -s -X main.version=$(VERSION)"
 
-%.pb.go: %.proto
+GEN=block/block.pb.go node/node.pb.go
+
+blk: $(GEN)
+	go build $(GOFLAGS) ./cmd/blk
+
+all: blk blk-arm blk-darwin
+
+install: $(GEN)
+	go install $(GOFLAGS) ./cmd/blk
+
+gen: $(GEN)
+
+%.pb.go:
 	go generate ./...
+
+blk-arm: $(GEN)
+	GOARCH=arm GOARM=6 go build $(GOFLAGS) -o $@ ./cmd/blk
+
+blk-darwin: $(GEN)
+	GOOS=darwin go build $(GOFLAGS) -o $@ ./cmd/blk
 
 clean:
-	$(RM) ./blk ./blkmine blk-arm blk-darwin $(shell find . -name '*.pb.go')
+	$(RM) ./blk ./blkmine blk-arm blk-darwin
 	go clean -i ./cmd/blk
 
-build:
-	go generate ./...
-	go build ./cmd/blk
+cleanpb:
+	$(RM) $(shell find . -name '*.pb.go')
 
-build-arm:
-	GOARCH=arm GOARM=6 go build -o blk-arm ./cmd/blk
+.PHONY: install build gen clean cleanpb
 
-build-darwin:
-	GOOS=darwin go build -o blk-darwin ./cmd/blk
-
-.PHONY: clean

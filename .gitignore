@@ -1,16 +1,18 @@
 # Misc
+/.vscode/
 *.mp4
 *.pdf
 
 # Build
-blk
-blkmine
-/vendor
+/bin/*
+/build/
+/blk*
+/vendor/
 
 # Temporary Hidden
-build
+/build
 
 # Drafting
-/draft
+/draft/
 TODO*
 notes.txt

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package node;
+
+option go_package = "github.com/harrybrwn/go-ledger/node;node";
+
+import "protobuf/block.proto";
+
+message BlockMsg {
+    string Sender     = 1;
+    block.Block Block = 2;
+    string ErrorMsg   = 3;
+}
+
+message BlockReq {
+    bytes Hash = 1;
+}
+
+service GetBlock {
+    rpc Block(BlockReq) returns (BlockMsg) {}
+}

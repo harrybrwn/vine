@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/harrybrwn/go-ledger/internal/logging"
 	"github.com/harrybrwn/mdns"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -16,6 +17,9 @@ import (
 )
 
 var log = logrus.StandardLogger()
+
+func init() {
+}
 
 // DisableLogging will disable logging
 func DisableLogging() {
@@ -37,6 +41,9 @@ func StartDiscovery(
 	service string,
 	every time.Duration,
 ) (<-chan peer.AddrInfo, error) {
+	log := logging.Copy()
+	log.Formatter = &logging.PrefixedFormatter{Prefix: "DISCOVERY"}
+
 	ch := make(chan peer.AddrInfo)
 	ticker := time.NewTicker(every)
 	entries := make(chan *mdns.ServiceEntry, 32)
@@ -49,9 +56,9 @@ func StartDiscovery(
 	go func() {
 		for e := range entries {
 			log.WithFields(logrus.Fields{
-				"host": e.Host, "info": e.Info,
-				"ipv4": e.AddrV4, "ipv6": e.AddrV6, "port": e.Port,
-			}).Traceln("discovered:", e.Name)
+				"host": e.Host, "ipv4": e.AddrV4,
+				"ipv6": e.AddrV6, "port": e.Port,
+			}).Tracef(e.Name)
 			peerAddr, err := mDNSEntryToAddr(e)
 			if err != nil {
 				log.Debugf("mDNS entry to peer address failed: %v", err)
@@ -74,7 +81,7 @@ func StartDiscovery(
 			}
 			if err := mdns.Query(&qp); err != nil {
 				// TODO: handle this error better
-				log.Error("mdns query error:", err)
+				log.Errorf("mdns query error: %v", err)
 			}
 
 			select {
@@ -181,9 +188,6 @@ func newMDNSServer(node host.Host, service string) (*mdns.Server, error) {
 	if err == nil {
 		port = addrs[0].Port
 		for _, addr := range addrs {
-			// if addr.IP.IsLoopback() {
-			// 	continue
-			// }
 			ips = append(ips, addr.IP)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/harrybrwn/go-ledger/block"
 	"github.com/harrybrwn/go-ledger/key"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -19,23 +20,52 @@ var (
 // CreateEmpty creates a new database file
 func CreateEmpty(dir string) error {
 	opts := badger.DefaultOptions(dir)
-	opts.Logger = nil
-	_, err := badger.Open(opts)
+	opts.Logger = logrus.StandardLogger()
+	db, err := badger.Open(opts)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	return nil
+	return db.Close()
+}
+
+// Open will open an existing database
+func Open(dir string) (*BlockStore, error) {
+	opts := badger.DefaultOptions(dir)
+	opts.Logger = logrus.StandardLogger()
+	db, err := badger.Open(opts)
+	if err != nil {
+		return nil, err
+	}
+	var head []byte
+	err = db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(headKey)
+		if err == badger.ErrKeyNotFound {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		return item.Value(func(v []byte) error {
+			head = v
+			return nil
+		})
+	})
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &BlockStore{db: db, head: head, opts: &opts}, nil
 }
 
 // New creates a new BlockStore
 func New(address key.Address, dir string) (*BlockStore, error) {
+	logrus.Warn("blockstore.New is deprecated")
 	opts := badger.DefaultOptions(dir)
 	opts.Logger = nil
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
-	store := &BlockStore{db: db}
+	store := &BlockStore{db: db, opts: &opts}
 
 	err = db.Update(func(txn *badger.Txn) error {
 		item, err := txn.Get(headKey)
@@ -68,18 +98,15 @@ func New(address key.Address, dir string) (*BlockStore, error) {
 type BlockStore struct {
 	db   *badger.DB
 	head []byte
+	opts *badger.Options
 }
-
-// ErrBlockNotMined is returned when a block has not
-// been mined when it should have been
-var ErrBlockNotMined = errors.New("block has not been mined")
 
 // Push will add a block the the blockchain and update the
 // database head hash. If the block has not been mined, then
 // an error will be returned.
 func (bs *BlockStore) Push(blk *block.Block) error {
 	return bs.db.Update(func(txn *badger.Txn) error {
-		return bs.setBlock(blk, txn)
+		return bs.pushBlock(blk, txn)
 	})
 }
 
@@ -87,7 +114,7 @@ func (bs *BlockStore) Push(blk *block.Block) error {
 func (bs *BlockStore) PushBlocks(blocks []*block.Block) error {
 	return bs.db.Update(func(txn *badger.Txn) error {
 		for _, blk := range blocks {
-			err := bs.setBlock(blk, txn)
+			err := bs.pushBlock(blk, txn)
 			if err != nil {
 				return err
 			}
@@ -96,9 +123,9 @@ func (bs *BlockStore) PushBlocks(blocks []*block.Block) error {
 	})
 }
 
-func (bs *BlockStore) setBlock(blk *block.Block, txn *badger.Txn) error {
+func (bs *BlockStore) pushBlock(blk *block.Block, txn *badger.Txn) error {
 	if !block.HasDoneWork(blk) {
-		return ErrBlockNotMined
+		return block.ErrBlockNotMined
 	}
 	raw, err := proto.Marshal(blk)
 	if err != nil {
@@ -111,6 +138,16 @@ func (bs *BlockStore) setBlock(blk *block.Block, txn *badger.Txn) error {
 	return err
 }
 
+// Close will close the block store
+func (bs *BlockStore) Close() (err error) {
+	if err = bs.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(headKey, bs.head)
+	}); err != nil {
+		return err
+	}
+	return bs.db.Close()
+}
+
 // Get will return a block given the block's hash as a key
 func (bs *BlockStore) Get(hash []byte) (*block.Block, error) {
 	blk := new(block.Block)
@@ -119,13 +156,13 @@ func (bs *BlockStore) Get(hash []byte) (*block.Block, error) {
 	})
 }
 
-// Head returns the head hash (the hash of the last block to be stored)
-func (bs *BlockStore) Head() []byte {
+// HeadHash returns the head hash (the hash of the last block to be stored)
+func (bs *BlockStore) HeadHash() []byte {
 	return bs.head
 }
 
-// HeadBlock will return the block stored at the head
-func (bs *BlockStore) HeadBlock() (*block.Block, error) {
+// Head will return the block stored at the head
+func (bs *BlockStore) Head() (*block.Block, error) {
 	b := new(block.Block)
 	return b, bs.db.View(func(txn *badger.Txn) error {
 		return initBlock(txn, bs.head, b)
@@ -163,6 +200,9 @@ func (bs *BlockStore) CheckValid() (ok bool, err error) {
 			// changed, set to not ok and stop
 			if bytes.Compare(head.Hash, prev) != 0 {
 				return nil
+			}
+			if !block.HasDoneWork(head) {
+				return block.ErrBlockNotMined
 			}
 		}
 		ok = true
@@ -210,83 +250,6 @@ func (bs *BlockStore) Transaction(id []byte) *block.Transaction {
 			return nil
 		}
 	}
-}
-
-// Iter will return a block iterator.
-func (bs *BlockStore) Iter() block.Iterator {
-	return &blockIter{
-		next: bs.head,
-		txn:  bs.db.NewTransaction(false),
-	}
-}
-
-// Blocks will return a channel generator that returns
-// the blocks in the chain
-func (bs *BlockStore) Blocks() <-chan *block.Block {
-	key := bs.head
-	ch := make(chan *block.Block)
-	send := func(v []byte) error {
-		b := &block.Block{}
-		err := proto.Unmarshal(v, b)
-		if err != nil {
-			return err
-		}
-		ch <- b
-		key = b.PrevHash
-		return nil
-	}
-
-	go func() {
-		defer close(ch)
-		err := bs.db.View(func(txn *badger.Txn) error {
-			for len(key) != 0 {
-				itm, err := txn.Get(withBlockPrefix(key))
-				if err != nil {
-					return err
-				}
-				itm.Value(send)
-			}
-			return nil
-		})
-		if err != nil {
-			panic(err)
-		}
-	}()
-	return ch
-}
-
-type blockIter struct {
-	next []byte // next block hash
-	txn  *badger.Txn
-}
-
-func (iter *blockIter) Close() error {
-	if iter.txn != nil {
-		iter.txn.Discard()
-		iter.txn = nil
-	}
-	return nil
-}
-
-func (iter *blockIter) Next() *block.Block {
-	blk := &block.Block{}
-	err := initBlock(iter.txn, iter.next, blk)
-	if err != nil {
-		iter.Close()
-		return nil
-	}
-	iter.next = blk.PrevHash
-	return blk
-}
-
-// Close will close the block store
-func (bs *BlockStore) Close() (err error) {
-	if err = bs.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(headKey, bs.head)
-	}); err != nil {
-		return err
-	}
-	return bs.db.Close()
 }
 
 func initBlock(txn *badger.Txn, key []byte, b *block.Block) error {

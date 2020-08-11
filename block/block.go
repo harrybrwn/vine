@@ -1,4 +1,4 @@
-//go:generate protoc -I. -I.. --go_out=paths=source_relative:. ./block.proto
+//go:generate protoc -I../protobuf -I.. --go_out=paths=source_relative:. ../protobuf/block.proto
 
 package block
 
@@ -7,15 +7,32 @@ import (
 	"errors"
 )
 
-// ErrNotEnoughFunds is an error returned when a sender
-// does not have enough money to make a transaction
-var ErrNotEnoughFunds = errors.New("not enough funds")
+// MineReward is the reward you get from mining a block
+const MineReward = 100
+
+var (
+	// ErrNotEnoughFunds is an error returned when a sender
+	// does not have enough money to make a transaction
+	ErrNotEnoughFunds = errors.New("not enough funds")
+
+	// ErrBlockNotMined is the error returned when a block has not had
+	// enough work done one it or it has not been mined (these are usually not
+	// mutually exclusive).
+	ErrBlockNotMined = errors.New("block has not been mined or done sufficient work")
+)
 
 // Chain is an interface that defines what a
 // blockchain is.
 type Chain interface {
 	TxFinder
 	Iter() Iterator
+	Head() (*Block, error)
+}
+
+// Store defines an interface for objects that can store blocks
+type Store interface {
+	Chain
+	Get([]byte) (*Block, error)
 }
 
 // Iterator is an interface that defines a block iterator
@@ -33,12 +50,6 @@ type TxFinder interface {
 	// Transaction looks for a Transaction by ID
 	// and returns nil if no transaction was found
 	Transaction([]byte) *Transaction
-}
-
-// IterCloser is an Iterator that must be closed
-type IterCloser interface {
-	Iterator
-	Close() error
 }
 
 // New creates a new block from a list of
@@ -66,7 +77,8 @@ func Genisis(coinbase *Transaction) *Block {
 // IsGenisis will return true if the block given
 // is the genisis block.
 func IsGenisis(b *Block) bool {
-	return len(b.PrevHash) == 0 &&
+	return b != nil &&
+		len(b.PrevHash) == 0 &&
 		len(b.Transactions) == 1 &&
 		b.Transactions[0].IsCoinbase()
 }
@@ -80,11 +92,6 @@ func (b *Block) CreateNext(data []byte) *Block {
 	}
 	block.Nonce, block.Hash = ProofOfWork(block)
 	return block
-}
-
-// ChainStats returns a blockchain metadata object
-func ChainStats(it Iterator) *chainStats {
-	return buildChainStats(it)
 }
 
 func merkleroot(hashes [][]byte) []byte {

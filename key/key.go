@@ -7,25 +7,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 
+	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/mr-tron/base58"
 	"golang.org/x/crypto/ripemd160"
 )
-
-type Key interface {
-	Bytes() []byte
-	Eq(Key) bool
-}
-
-type PrivKey interface {
-	Key
-	Sign([]byte) ([]byte, error)
-	Pub()
-}
-
-// TODO: change this to PubKey
-type PublicKey interface {
-	Key
-}
 
 // GenPair generates a public key and private key pair
 func GenPair() ([]byte, *ecdsa.PrivateKey) {
@@ -40,6 +25,15 @@ func GenPair() ([]byte, *ecdsa.PrivateKey) {
 	return pub, priv
 }
 
+// GenKey will genrate a private key
+func GenKey() *ecdsa.PrivateKey {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil
+	}
+	return priv
+}
+
 // ExtractPubKeyHash will pull the public key hash out of
 // a wallet address.
 func ExtractPubKeyHash(address string) []byte {
@@ -50,7 +44,23 @@ func ExtractPubKeyHash(address string) []byte {
 	return hash[1 : len(hash)-4]
 }
 
-// PublicKey is a public key
+// HashPubKey will create a public key hash
+// from a public key.
+func HashPubKey(pub crypto.PubKey) []byte {
+	raw, err := pub.Raw()
+	if err != nil {
+		return nil
+	}
+	ripemd := ripemd160.New()
+	pubhash := sha256.Sum256(raw)
+	_, err = ripemd.Write(pubhash[:])
+	if err != nil {
+		return nil
+	}
+	return ripemd.Sum(nil)
+}
+
+// PubKey is a public key
 type PubKey []byte
 
 // Hash will generate the public key hash.
@@ -61,10 +71,9 @@ func (pk PubKey) Hash() []byte {
 	return ripemd.Sum(nil)
 }
 
-func (pk PubKey) Bytes() []byte {
-	return []byte(pk)
+func (pk PubKey) Raw() ([]byte, error) {
+	return []byte(pk), nil
 }
-
-func (pk PubKey) Eq(k Key) bool {
-	return bytes.Compare(pk.Bytes(), k.Bytes()) == 0
+func (pk PubKey) Bytes() ([]byte, error) {
+	return []byte(pk), nil
 }

@@ -3,28 +3,26 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/harrybrwn/go-ledger/blockstore"
 	"github.com/harrybrwn/go-ledger/internal/config"
 	"github.com/harrybrwn/go-ledger/key/wallet"
 	"github.com/harrybrwn/go-ledger/node"
 	"github.com/harrybrwn/go-ledger/p2p"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/network"
+	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/protocol"
-	p2pconfig "github.com/libp2p/go-libp2p/config"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 )
 
 func newSendCmd() *cobra.Command {
@@ -47,7 +45,6 @@ func newSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
 			for pa := range ch {
 				go func(peer peer.AddrInfo) {
 					fmt.Println("connecting to", peer.ID.Pretty())
@@ -80,27 +77,31 @@ func newSyncCmd() *cobra.Command {
 
 func newPeersCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "peers",
-		Short: "Get info on the peers connected",
+		Use:           "peers",
+		Short:         "Get info on the peers connected",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-			opts := []p2pconfig.Option{libp2p.NoListenAddrs}
-			walletName := config.GetString("wallet")
-			if walletName != "" {
-				key, err := openKey(walletName)
-				if err == nil {
-					opts = append(opts, libp2p.Identity(key))
-				} else {
-					log.Warn(err)
-				}
-			}
-			host, err := libp2p.New(ctx, opts...)
+			ctx, stop := context.WithCancel(context.Background())
+			defer stop()
+			walletname := config.GetString("wallet")
+			w, err := openWallet(walletname)
 			if err != nil {
-				return err
+				log.WithError(err).Warnf("could not open wallet %s", walletname)
+				w = wallet.New()
 			}
+			priv := cryptoPrivKey(w.PrivateKey())
+
+			host, err := libp2p.New(
+				ctx,
+				libp2p.Identity(priv),
+				libp2p.NoListenAddrs,
+			)
+			if err != nil {
+				return errors.Wrap(err, "could not create host")
+			}
+
 			fmt.Println("me:", host.ID().Pretty())
-			ctx, cancel := context.WithCancel(ctx)
-			defer cancel()
 			ch, err := p2p.DiscoverOnce(host.ID(), node.DiscoveryTag)
 			if err != nil {
 				return err
@@ -117,27 +118,31 @@ func newPeersCmd() *cobra.Command {
 
 func newTestCmd() *cobra.Command {
 	var hit string
+	var gprcReq bool
 	c := &cobra.Command{
 		Use:           "test",
+		Short:         "Make calls to any node endpoint and return the first successful response",
 		Hidden:        true,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts := []p2pconfig.Option{
-				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+			var (
+				walletname = config.GetString("wallet")
+				w          *wallet.Wallet
+				err        error
+			)
+			w, err = openWallet(walletname)
+			if err != nil {
+				log.WithError(err).Warn("could not open wallet")
+				w = wallet.New()
 			}
-			walletName := config.GetString("wallet")
-			if walletName != "" {
-				key, err := openKey(walletName)
-				if err == nil {
-					opts = append(opts, libp2p.Identity(key))
-				} else {
-					log.Warn(err)
-				}
-			}
+			priv := cryptoPrivKey(w.PrivateKey())
 
 			ctx := context.Background()
-			host, err := libp2p.New(ctx, opts...)
+			host, err := libp2p.New(ctx,
+				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+				libp2p.Identity(priv),
+			)
 			if err != nil {
 				return err
 			}
@@ -157,6 +162,23 @@ func newTestCmd() *cobra.Command {
 				return errors.New("no endpoint to hit")
 			}
 
+			if gprcReq {
+				var conn *grpc.ClientConn
+				conn, err = grpc.Dial("", grpc.WithInsecure())
+				if err != nil {
+					panic(err)
+				}
+				client := node.NewGetBlockClient(conn)
+				blkMsg, err := client.Block(ctx, &node.BlockReq{Hash: []byte("no")})
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println(blkMsg)
+			}
+
+			type errorResp struct {
+				Error string `json:"error"`
+			}
 			for pa := range ch {
 				if err := host.Connect(ctx, pa); err != nil {
 					log.Error("Could not connect:", err)
@@ -166,11 +188,16 @@ func newTestCmd() *cobra.Command {
 				if err != nil {
 					return errors.Wrap(err, "could not create stream")
 				}
-
-				io.Copy(os.Stdout, s)
+				buf := &bytes.Buffer{}
+				io.Copy(buf, s)
 				s.Close()
+				e := errorResp{}
+				json.Unmarshal(buf.Bytes(), &e)
+				if e.Error != "" {
+					continue
+				}
 				cancel()
-				println()
+				fmt.Printf("%s\n", buf.String())
 				return nil
 			}
 			return fmt.Errorf("could not find '%s'", hit)
@@ -179,75 +206,17 @@ func newTestCmd() *cobra.Command {
 	return c
 }
 
-func newDaemonCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:           "daemon",
-		Short:         "Start the daemon",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, stop := context.WithCancel(context.Background())
-			defer stop()
-			opts := []libp2p.Option{
-				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
-			}
-			walletname := config.GetString("wallet")
-			if walletname != "" {
-				key, err := openKey(walletname)
-				if err == nil {
-					opts = append(opts, libp2p.Identity(key))
-				} else {
-					log.WithError(err).Warn("could not open wallet")
-				}
-			}
-
-			host, err := libp2p.New(ctx, opts...)
-			if err != nil {
-				return err
-			}
-			defer host.Close()
-
-			termSigs := make(chan os.Signal)
-			signal.Notify(termSigs, os.Interrupt, syscall.SIGTERM)
-
-			// for testing
-			host.SetStreamHandler("/msg", func(s network.Stream) {
-				buf := new(bytes.Buffer)
-				io.Copy(buf, s)
-				log.Info(buf.String())
-			})
-
-			pid := os.Getpid()
-			fmt.Println(pid, host.ID())
-			log.WithFields(log.Fields{
-				"pid":  pid,
-				"node": host.ID().Pretty(),
-			}).Infof("Starting full node")
-
-			store, err := blockstore.New(wallet.New(), filepath.Join(config.GetString("config"), "blocks"))
-			if err != nil {
-				return err
-			}
-			node, err := node.FullNode(ctx, host, store)
-			if err != nil {
-				return err
-			}
-			defer node.Close()
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-termSigs:
-				fmt.Print("\r") // hide the '^C'
-				log.Info("Shutting down...")
-				time.Sleep(time.Second / 2) // hey man, this makes it look cool ok, don't judge
-				log.Info("Graceful shutdown successful.")
-				return nil
-			}
-		},
-	}
-	return c
+func blocksDir() string {
+	return filepath.Join(
+		config.GetString("config"),
+		"blocks",
+	)
 }
 
-func handleInterupt() {
+func cryptoPrivKey(k *ecdsa.PrivateKey) crypto.PrivKey {
+	priv, _, err := crypto.ECDSAKeyPairFromKey(k)
+	if err != nil {
+		return nil
+	}
+	return priv
 }

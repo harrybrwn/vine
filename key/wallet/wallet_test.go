@@ -2,11 +2,13 @@ package wallet
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/harrybrwn/go-ledger/key"
+	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/mr-tron/base58"
 )
 
@@ -51,4 +53,42 @@ func Test(t *testing.T) {
 	pub := key.ExtractPubKeyHash(w.Address())
 	fmt.Printf("%x\n", pubkh)
 	fmt.Printf("%x\n", pub)
+}
+
+func TestReadWrite(t *testing.T) {
+	check := func(e error) {
+		if e != nil {
+			t.Error(e)
+		}
+	}
+	var buf bytes.Buffer
+	w := New()
+	w.version = 0x3
+	_, err := w.WriteTo(&buf)
+	check(err)
+	wt := Wallet{}
+	_, err = wt.ReadFrom(&buf)
+	check(err)
+	if w.Address() != wt.Address() {
+		t.Error("address was changed after reading/writing wallet")
+	}
+	if w.priv.X.Cmp(wt.priv.X) != 0 {
+		t.Error("private key X was changed")
+	}
+	if w.priv.Y.Cmp(wt.priv.Y) != 0 {
+		t.Error("private key Y was changed")
+	}
+	k := w.PrivKey()
+	k2 := wt.PrivKey()
+	if !k.Equals(k2) {
+		t.Error("wallet privet keys different when changed to a crypto key")
+	}
+	if w.version != wt.version {
+		t.Error("wrong version")
+	}
+}
+
+func dec(k *ecdsa.PrivateKey) crypto.PrivKey {
+	p, _, _ := crypto.ECDSAKeyPairFromKey(k)
+	return p
 }

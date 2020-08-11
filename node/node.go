@@ -1,4 +1,4 @@
-//go:generate protoc -I.. -I. --go_out=paths=source_relative:. ./node.proto
+//go:generate protoc -I../protobuf -I.. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. ../protobuf/node.proto
 
 package node
 
@@ -14,7 +14,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/harrybrwn/go-ledger/block"
-	"github.com/harrybrwn/go-ledger/blockstore"
 	"github.com/harrybrwn/go-ledger/p2p"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
@@ -22,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -35,14 +35,16 @@ const (
 // Node is a node
 type Node struct {
 	host     host.Host
-	ctx      context.Context
+	store    block.Store
 	newPeers <-chan peer.AddrInfo
-	cancel   context.CancelFunc
-	store    *blockstore.BlockStore
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	errs   chan error
 }
 
 // FullNode will run a full node
-func FullNode(ctx context.Context, host host.Host, store *blockstore.BlockStore) (*Node, error) {
+func FullNode(ctx context.Context, host host.Host, store block.Store) (*Node, error) {
 	ctx, stop := context.WithCancel(ctx)
 	ch, err := p2p.StartDiscovery(ctx, host, DiscoveryTag, DiscoveryTime)
 	if err != nil {
@@ -55,9 +57,8 @@ func FullNode(ctx context.Context, host host.Host, store *blockstore.BlockStore)
 		store:    store,
 		newPeers: ch,
 		cancel:   stop,
+		errs:     make(chan error),
 	}
-	// start local discovery
-	go n.discover()
 
 	host.SetStreamHandlerMatch(
 		"/blk/head", regex(`^(/test|/protobuf|/proto|/json)?/blk/head$`),
@@ -67,9 +68,10 @@ func FullNode(ctx context.Context, host host.Host, store *blockstore.BlockStore)
 			parts := strings.Split(string(s.Protocol()), "/")
 			protocol := parts[1]
 
-			blk, err := n.store.HeadBlock()
+			blk, err := n.store.Head()
 			if err != nil {
-				log.WithError(err).Error("could not get head block")
+				log.WithError(err).Debug("could not respond with head block")
+				sendError(s, err)
 				return
 			}
 			log.WithField("protocol", protocol).Trace("got head block")
@@ -77,7 +79,7 @@ func FullNode(ctx context.Context, host host.Host, store *blockstore.BlockStore)
 			err = sendBlock(protocol, blk, s)
 			if err != nil {
 				log.WithError(err).Debug("could not send block through network")
-				fmt.Fprintf(s, `{"error":"%v"}`, err.Error())
+				sendError(s, err)
 				return
 			}
 		},
@@ -100,7 +102,36 @@ func FullNode(ctx context.Context, host host.Host, store *blockstore.BlockStore)
 	host.SetStreamHandler("/blk/tx", func(s network.Stream) {
 		// listen for new transactions
 	})
+
 	return n, nil
+}
+
+// Start the node
+func (n *Node) Start() error {
+	// start local discovery
+	go n.discover()
+	go func() {
+		for {
+			select {
+			case err := <-n.errs:
+				log.Error(err)
+			}
+		}
+	}()
+	return nil
+}
+
+// StartWithGRPC will start the node and listen for requests
+// from the network with a grpc server.
+func (n *Node) StartWithGRPC(srv *grpc.Server) error {
+	l := newStreamListener(n.ctx, n.host)
+	go func() {
+		err := srv.Serve(l)
+		if err != nil {
+			log.WithError(err).Error("could not serve grpc server")
+		}
+	}()
+	return n.Start()
 }
 
 // Sync with the rest of the network.
@@ -111,7 +142,7 @@ func (n *Node) Sync() error {
 // Close the node
 func (n *Node) Close() error {
 	n.cancel()
-	return n.host.Network().Close()
+	return n.host.Close()
 }
 
 func (n *Node) discover() {
@@ -126,7 +157,8 @@ func (n *Node) discover() {
 		}
 		log.Infof("connecting to %s", addr.ID.Pretty())
 		if err := n.host.Connect(n.ctx, addr); err != nil {
-			log.Warn("could not connect:", err)
+			n.errs <- err
+			log.WithError(err).Warnf("could not connect to %s", addr.ID.Pretty())
 		}
 	}
 }
@@ -163,7 +195,7 @@ func sendBlock(protocol string, blk *block.Block, s network.Stream) error {
 		err  error
 		raw  []byte
 		// TODO: I don't actually need to have the sender field
-		data = BlockRequest{
+		data = BlockMsg{
 			Block:  blk,
 			Sender: string(conn.LocalPeer()),
 		}
@@ -190,6 +222,10 @@ func sendBlock(protocol string, blk *block.Block, s network.Stream) error {
 		"hash":     hex.EncodeToString(blk.Hash),
 	}).Info("sent block")
 	return err
+}
+
+func sendError(s network.Stream, err error) {
+	fmt.Fprintf(s, `{"error":"%v"}`, err)
 }
 
 func getBlockHashFromProto(p protocol.ID) (string, []byte) {

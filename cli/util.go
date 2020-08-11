@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -49,5 +50,8 @@ func mkdir(d string) error {
 	if os.IsExist(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("could not create %s: %v", d, err)
+	}
+	return nil
 }

@@ -12,11 +12,18 @@ import (
 	"time"
 
 	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/sirupsen/logrus"
 )
 
+func init() { logrus.SetLevel(logrus.ErrorLevel) }
+
 func TestNewBlockStore(t *testing.T) {
-	store, dir, err := testStore(t)
-	defer os.RemoveAll(dir)
+	store, dir, err := testStore(10, t)
+	defer func() {
+		store.Close()
+		os.RemoveAll(dir)
+	}()
 	if err != nil {
 		t.Error(err)
 	}
@@ -51,7 +58,7 @@ func TestNewBlockStore(t *testing.T) {
 }
 
 func TestBlockIter(t *testing.T) {
-	store, dir, err := testStore(t)
+	store, dir, err := testStore(10, t)
 	if err != nil {
 		t.Error(err)
 	}
@@ -93,19 +100,86 @@ func TestBlockIter(t *testing.T) {
 func TestUpdateStore(t *testing.T) {
 }
 
-func testStore(t *testing.T) (*BlockStore, string, error) {
+const benchmarkBlocks = 4
+
+func BenchmarkBasicIter(b *testing.B) {
+	store, dir, err := testingStore(benchmarkBlocks)
+	if err != nil {
+		store.Close()
+		os.RemoveAll(dir)
+		b.Fatal(err)
+	}
+	for i := 0; i < b.N; i++ {
+		it := store.Iter()
+		for {
+			blk := it.Next()
+			if block.IsGenisis(blk) {
+				break
+			}
+		}
+	}
+	store.Close()
+	os.RemoveAll(dir)
+}
+
+func BenchmarkIterWithChanner(b *testing.B) {
+	store, dir, err := testingStore(benchmarkBlocks)
+	if err != nil {
+		store.Close()
+		os.RemoveAll(dir)
+		b.Fatal(err)
+	}
+	for i := 0; i < b.N; i++ {
+		ch := store.Blocks()
+		for blk := range ch {
+			if block.IsGenisis(blk) {
+				break
+			}
+		}
+	}
+	store.Close()
+	os.RemoveAll(dir)
+}
+
+func testStore(n int, t *testing.T) (*BlockStore, string, error) {
 	t.Helper()
+	if n <= 0 {
+		n = 10
+	}
 	dir := tempdir()
 	store, err := New(addr("tester"), dir)
 	if err != nil {
 		t.Error(err)
 		return nil, dir, err
 	}
-	for i := 0; i < 10; i++ {
-		b := block.New(nil, store.Head())
+	for i := 0; i < n; i++ {
+		b := block.New(nil, store.HeadHash())
 		err = store.Push(b)
 		if err != nil {
 			t.Error(err)
+		}
+	}
+	return store, dir, nil
+}
+
+func testingStore(n int) (*BlockStore, string, error) {
+	if n <= 0 {
+		n = 10
+	}
+	dir := tempdir()
+	store, err := New(addr("tester"), dir)
+	if err != nil {
+		return nil, dir, err
+	}
+	genisis := block.Genisis(block.Coinbase(wallet.New()))
+	if err = store.Push(genisis); err != nil {
+		return store, dir, err
+	}
+	for i := 0; i < n; i++ {
+		b := block.New(nil, store.HeadHash())
+		err = store.Push(b)
+		if err != nil {
+			return nil, dir, err
 		}
 	}
 	return store, dir, nil

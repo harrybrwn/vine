@@ -9,14 +9,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/harrybrwn/go-ledger/key"
 )
 
-// UTXO holds unspent transaction outputs.
-type UTXO interface {
+// ErrInvalidSignature is the error value given when a transaction has
+// an invalid signature
+var ErrInvalidSignature = errors.New("invalid signature")
+
+// UTXOSet holds unspent transaction outputs.
+type UTXOSet interface {
 	Bal(key.Address) int64
 }
 
@@ -93,7 +98,7 @@ func initTransaction(
 	}
 	tx.Outputs = append(tx.Outputs, outs...)
 	tx.ID = tx.hash()
-	return tx.Sign(header.From.PrivateKey(), finder)
+	return nil // in the future... return tx.Sign(header.From.PrivateKey(), finder)
 }
 
 func newOutputs(from key.Sender, balance int64, recv []receiver) ([]*TxOutput, error) {
@@ -163,6 +168,9 @@ func buildChainStats(it Iterator) *chainStats {
 			}
 		}
 		if IsGenisis(block) {
+			if ic, ok := it.(io.Closer); ok {
+				ic.Close()
+			}
 			break
 		}
 	}
@@ -228,7 +236,7 @@ func (sts *chainStats) spendableTxOutputs(pubkeyhash []byte, cap int64) (spendab
 }
 
 // Sign signs a tx
-func (tx *Transaction) Sign(key *ecdsa.PrivateKey, find TxFinder) error {
+func (tx *Transaction) Sign(priv *ecdsa.PrivateKey, find TxFinder) error {
 	if tx.IsCoinbase() {
 		return nil
 	}
@@ -247,14 +255,14 @@ func (tx *Transaction) Sign(key *ecdsa.PrivateKey, find TxFinder) error {
 			// TODO: fix this, at least with good error handling
 			fmt.Println("outindex:", input.OutIndex, ", input len:", len(txcp.Outputs))
 			fmt.Println(hex.EncodeToString(prev.ID), "=>", hex.EncodeToString(txcp.ID))
+			// return errors.New("invalid transaction output index")
 			panic("transaction output index is out of range: wtf is going on")
-			return errors.New("invalid transaction output index")
 		}
 
 		input.PubKey = txcp.Outputs[input.OutIndex].PubKeyHash
 		txcp.ID = txcp.hash()
 		txcp.Inputs[i].PubKey = nil
-		r, s, err := ecdsa.Sign(rand.Reader, key, txcp.ID)
+		r, s, err := ecdsa.Sign(rand.Reader, priv, txcp.ID)
 		if err != nil {
 			return err
 		}
@@ -262,10 +270,6 @@ func (tx *Transaction) Sign(key *ecdsa.PrivateKey, find TxFinder) error {
 	}
 	return nil
 }
-
-// ErrInvalidSignature is the error value given when a transaction has
-// an invalid signature
-var ErrInvalidSignature = errors.New("invalid signature")
 
 // VerifySig will verify that a transaction has been correctly signed
 func (tx *Transaction) VerifySig(find TxFinder) error {
