@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/harrybrwn/go-ledger/internal/config"
+	"github.com/harrybrwn/config"
 	"github.com/harrybrwn/go-ledger/internal/logging"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -47,7 +47,7 @@ func NewBLK(version string) *cobra.Command {
 		f.Close()
 		err = e
 	}
-	if config.GetString("config") == "" {
+	if config.IsEmpty("config") {
 		conf.Config = dir
 	}
 
@@ -81,7 +81,7 @@ risk, as of 2020 there is a high risk of being overpowered by a
 	c.SetHelpTemplate(commandTemplate)
 	c.AddCommand(
 		newConfigCmd(),
-		newLogCmd(),
+		logging.NewLogCmd(LogFile),
 		newCompletionCmd(),
 		newInitBlockStoreCmd(),
 		newWalletCmd(),

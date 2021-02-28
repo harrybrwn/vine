@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/harrybrwn/go-ledger/internal/config"
+	"github.com/harrybrwn/config"
 	"github.com/harrybrwn/go-ledger/key/wallet"
 	"github.com/harrybrwn/go-ledger/node"
 	"github.com/harrybrwn/go-ledger/p2p"
@@ -106,7 +106,6 @@ func newPeersCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
 			for pa := range ch {
 				fmt.Println(pa)
 			}

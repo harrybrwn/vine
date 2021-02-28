@@ -1,10 +1,12 @@
 VERSION=$(shell git describe --tags --abbrev=0)-$(shell git rev-parse --short HEAD)
 GOFLAGS=-ldflags "-w -s -X main.version=$(VERSION)"
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
 
 GEN=block/block.pb.go node/node.pb.go
 
 blk: $(GEN)
-	go build $(GOFLAGS) ./cmd/blk
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) ./cmd/blk
 
 all: blk blk-arm blk-darwin
 

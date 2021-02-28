@@ -1,11 +1,12 @@
 module github.com/harrybrwn/go-ledger
 
-go 1.14
+go 1.16
 
 require (
 	github.com/dgraph-io/badger/v2 v2.0.3
 	github.com/fatih/color v1.9.0
 	github.com/golang/protobuf v1.4.2
+	github.com/harrybrwn/config v0.1.2
 	github.com/harrybrwn/errs v0.0.1
 	github.com/harrybrwn/mdns v1.0.4-0.20200730094346-cab0f176f7ac
 	github.com/libp2p/go-libp2p v0.10.3

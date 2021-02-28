@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/harrybrwn/config"
 	"github.com/harrybrwn/go-ledger/blockstore"
-	"github.com/harrybrwn/go-ledger/internal/config"
 	"github.com/harrybrwn/go-ledger/key/wallet"
 	"github.com/harrybrwn/go-ledger/node"
 	"github.com/libp2p/go-libp2p"

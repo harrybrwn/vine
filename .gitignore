@@ -1,7 +1,7 @@
 # Misc
 /.vscode/
 *.mp4
-*.pdf
+bitcoin.pdf
 
 # Build
 /bin/*
