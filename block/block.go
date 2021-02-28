@@ -5,6 +5,8 @@ package block
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
+	"time"
 )
 
 // MineReward is the reward you get from mining a block
@@ -49,7 +51,7 @@ type Iterator interface {
 type TxFinder interface {
 	// Transaction looks for a Transaction by ID
 	// and returns nil if no transaction was found
-	Transaction([]byte) *Transaction
+	Transaction(id []byte) *Transaction
 }
 
 // New creates a new block from a list of
@@ -66,8 +68,9 @@ func New(txs []*Transaction, prev []byte) *Block {
 
 // Genisis creates the first block of the chain
 func Genisis(coinbase *Transaction) *Block {
+	data := fmt.Sprintf("Genisis Block %v", time.Now())
 	b := &Block{
-		Data:         []byte("go-ledger Genisis Block"),
+		Data:         []byte(data),
 		Transactions: []*Transaction{coinbase},
 	}
 	b.Nonce, b.Hash = ProofOfWork(b)
@@ -95,21 +98,24 @@ func (b *Block) CreateNext(data []byte) *Block {
 }
 
 func merkleroot(hashes [][]byte) []byte {
-	n := len(hashes)
-	if n < 1 {
+	var (
+		n    = len(hashes)
+		hash = sha256.New()
+		tree [][]byte
+	)
+	switch n {
+	case 0:
 		return nil
-	}
-	if n == 1 {
+	case 1:
 		return hashes[0]
 	}
+
 	if n%2 != 0 {
 		hashes = append(hashes, hashes[n-1])
 		n++
 	}
-	var (
-		hash = sha256.New()
-		tree = make([][]byte, 0, n/2)
-	)
+
+	tree = make([][]byte, 0, n/2)
 	for i := 0; i < n; i += 2 {
 		hash.Write(hashes[i])
 		hash.Write(hashes[i+1])

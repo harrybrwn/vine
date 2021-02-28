@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,14 +26,14 @@ type UTXOSet interface {
 	Bal(key.Address) int64
 }
 
-var coinbaseValue int64 = 100
+var coinbaseValue uint64 = 100
 
 // Coinbase will create a coinbase transaction.
 func Coinbase(to key.Address) *Transaction {
 	tx := &Transaction{
 		Inputs: []*TxInput{
 			{
-				TxID:      []byte{},
+				TxID:      nil,
 				OutIndex:  -1,
 				Signature: []byte(fmt.Sprintf("Coins to %s", to)),
 			},
@@ -50,44 +51,60 @@ func Coinbase(to key.Address) *Transaction {
 
 type chainStats struct {
 	// mapping of user addresses to user balances
-	balances map[string]int64
+	balances map[string]uint64
 
 	// maps transaction IDs to spent output indexes
 	spent   map[string][]int
 	unspent []*Transaction
 	// maps user pub-key-hashes to unspent outputs
-	utxo map[string][]*TxOutput
+	utxo map[string][]*utxo
+}
+
+type utxo struct {
+	out   *TxOutput
+	index int
 }
 
 // TxDesc describes a transaction at a high level
 type TxDesc struct {
 	From   key.Sender
 	To     key.Receiver
-	Amount int64
+	Amount uint64
 }
 
 type receiver struct {
 	to     key.Receiver
-	amount int64
+	amount uint64
 }
 
-// NewTransaction creates a new transaction
+// NewTransaction creates a new transaction. The new transaction will not be
+// added to the chain.
 func NewTransaction(chain Chain, stats *chainStats, descriptor *TxDesc) (*Transaction, error) {
 	tx := new(Transaction)
-	err := initTransaction(chain, stats, *descriptor, tx)
+	err := initTransaction(chain, stats, tx, *descriptor)
 	return tx, err
 }
 
 func initTransaction(
 	finder TxFinder,
 	stats *chainStats,
-	header TxDesc,
 	tx *Transaction,
+	header TxDesc,
 ) (err error) {
 	bal, spendable := stats.spendableTxOutputs(header.From.PubKeyHash(), header.Amount)
-	err = tx.setInputs(header.From, spendable)
-	if err != nil {
-		return err
+	for txid, outIDs := range spendable {
+		txID, err := hex.DecodeString(txid)
+		if err != nil {
+			return err
+		}
+		for _, out := range outIDs {
+			tx.Inputs = append(tx.Inputs, &TxInput{
+				TxID:      txID,
+				OutIndex:  int32(out),
+				PubKey:    header.From.PublicKey(),
+				Signature: nil,
+			})
+		}
 	}
 	outs, err := newOutputs(
 		header.From, bal,
@@ -98,12 +115,15 @@ func initTransaction(
 	}
 	tx.Outputs = append(tx.Outputs, outs...)
 	tx.ID = tx.hash()
-	return nil // in the future... return tx.Sign(header.From.PrivateKey(), finder)
+	return tx.Sign(header.From.PrivateKey(), finder)
 }
 
-func newOutputs(from key.Sender, balance int64, recv []receiver) ([]*TxOutput, error) {
-	n := len(recv)
-	outs := make([]*TxOutput, 0, n)
+func newOutputs(from key.Sender, balance uint64, recv []receiver) ([]*TxOutput, error) {
+	var (
+		n    = len(recv)
+		outs = make([]*TxOutput, 0, n)
+	)
+	// Add a transaction output for each receiver
 	for i := 0; i < n; i++ {
 		balance -= recv[i].amount
 		if balance < 0 {
@@ -114,6 +134,9 @@ func newOutputs(from key.Sender, balance int64, recv []receiver) ([]*TxOutput, e
 			PubKeyHash: recv[i].to.PubKeyHash(),
 		})
 	}
+	// If the sender did not spend their entire
+	// balence then an extra output is added which
+	// gives the sender the rest of their balence
 	if balance > 0 {
 		outs = append(outs, &TxOutput{
 			Amount:     balance,
@@ -128,10 +151,10 @@ func buildChainStats(it Iterator) *chainStats {
 		block   *Block
 		userkey string
 		s       = &chainStats{
-			balances: make(map[string]int64),
+			balances: make(map[string]uint64),
 			spent:    make(map[string][]int),
 			unspent:  make([]*Transaction, 0),
-			utxo:     make(map[string][]*TxOutput),
+			utxo:     make(map[string][]*utxo),
 		}
 	)
 
@@ -139,6 +162,10 @@ func buildChainStats(it Iterator) *chainStats {
 		block = it.Next()
 		for _, tx := range block.Transactions {
 			txid := tx.StrID()
+			if len(txid) == 0 {
+				err := errors.New("transaction has no ID")
+				panic(err)
+			}
 			for outIx, out := range tx.Outputs {
 				// check if the current transaction output index
 				// has been stored in the spent tx outputs
@@ -156,7 +183,7 @@ func buildChainStats(it Iterator) *chainStats {
 				// fmt.Println(userkey, s.balances[userkey], "+", out.Amount)
 				s.balances[userkey] += out.Amount
 				s.unspent = append(s.unspent, tx)
-				s.utxo[userkey] = append(s.utxo[userkey], out)
+				s.utxo[userkey] = append(s.utxo[userkey], &utxo{out: out, index: outIx})
 			}
 
 			// Inputs of a coinbase transactions do not reference an output.
@@ -182,20 +209,25 @@ func (sts *chainStats) markSpent(txid []byte, index int) {
 	sts.spent[id] = append(sts.spent[id], index)
 }
 
-func (sts *chainStats) Bal(user key.Receiver) (bal int64) {
-	pubkh := key.ExtractPubKeyHash(user.Address())
-	key := hex.EncodeToString(pubkh)
+func (sts *chainStats) Bal(user key.Receiver) (bal uint64) {
+	key := hex.EncodeToString(user.PubKeyHash())
 	for _, out := range sts.utxo[key] {
-		bal += out.Amount
+		bal += out.out.Amount
 	}
 	if bal != sts.balances[hex.EncodeToString(user.PubKeyHash())] {
+		// TODO do i even need this function if i can just get if from this map?
 		panic("this is a test: should have gotten the same result")
 	}
 	return bal
 }
 
 func (sts *chainStats) UserUTXO(user key.Receiver) []*TxOutput {
-	return sts.utxo[hex.EncodeToString(user.PubKeyHash())]
+	utxos := sts.utxo[hex.EncodeToString(user.PubKeyHash())]
+	outs := make([]*TxOutput, len(utxos))
+	for _, u := range utxos {
+		outs = append(outs, u.out)
+	}
+	return outs
 }
 
 func (sts *chainStats) txOutputIsSpent(txid string, index int) bool {
@@ -212,7 +244,7 @@ func (sts *chainStats) txOutputIsSpent(txid string, index int) bool {
 // SpendableTxOutputs returns a user's balance and spendable outputs.
 // user is the user that will be spending the outputs and
 // cap is the amount cap that they are trying to spend
-func (sts *chainStats) spendableTxOutputs(pubkeyhash []byte, cap int64) (spendable int64, spOuts map[string][]int) {
+func (sts *chainStats) spendableTxOutputs(pubkeyhash []byte, cap uint64) (spendable uint64, spOuts map[string][]int) {
 	var (
 		txid string
 	)
@@ -236,7 +268,7 @@ func (sts *chainStats) spendableTxOutputs(pubkeyhash []byte, cap int64) (spendab
 }
 
 // Sign signs a tx
-func (tx *Transaction) Sign(priv *ecdsa.PrivateKey, find TxFinder) error {
+func (tx *Transaction) Sign(priv *ecdsa.PrivateKey, finder TxFinder) error {
 	if tx.IsCoinbase() {
 		return nil
 	}
@@ -246,23 +278,16 @@ func (tx *Transaction) Sign(priv *ecdsa.PrivateKey, find TxFinder) error {
 	)
 
 	for i, input := range txcp.Inputs {
-		prev = find.Transaction(input.TxID)
-		if prev == nil {
+		prev = finder.Transaction(input.TxID)
+		if prev == nil || prev.ID == nil {
 			return errors.New("transaction does not exist or is malformed")
 		}
 		input.Signature = nil
-		if int(input.OutIndex) >= len(txcp.Outputs) {
-			// TODO: fix this, at least with good error handling
-			fmt.Println("outindex:", input.OutIndex, ", input len:", len(txcp.Outputs))
-			fmt.Println(hex.EncodeToString(prev.ID), "=>", hex.EncodeToString(txcp.ID))
-			// return errors.New("invalid transaction output index")
-			panic("transaction output index is out of range: wtf is going on")
-		}
+		input.PubKey = prev.Outputs[input.OutIndex].PubKeyHash
+		txHash := txcp.hash()
+		input.PubKey = nil
 
-		input.PubKey = txcp.Outputs[input.OutIndex].PubKeyHash
-		txcp.ID = txcp.hash()
-		txcp.Inputs[i].PubKey = nil
-		r, s, err := ecdsa.Sign(rand.Reader, priv, txcp.ID)
+		r, s, err := ecdsa.Sign(rand.Reader, priv, txHash)
 		if err != nil {
 			return err
 		}
@@ -285,18 +310,17 @@ func (tx *Transaction) VerifySig(find TxFinder) error {
 		txHash     []byte
 	)
 
-	for i, input := range tx.Inputs {
+	for i, input := range txcp.Inputs {
 		prev = find.Transaction(input.TxID)
 		txcp.Inputs[i].Signature = nil
 		// set the public key to get the correct transaction hash
 		txcp.Inputs[i].PubKey = prev.Outputs[input.OutIndex].PubKeyHash
 		txHash = txcp.hash()
-		// reset the public key after hashing
 		txcp.Inputs[i].PubKey = nil
 
-		r, s = splitBytes(input.Signature)
-		x, y = splitBytes(input.PubKey)
+		x, y = splitBytes(tx.Inputs[i].PubKey) // get the unmodified input public key
 		pub = ecdsa.PublicKey{Curve: curve, X: x, Y: y}
+		r, s = splitBytes(tx.Inputs[i].Signature)
 		if !ecdsa.Verify(&pub, txHash, r, s) {
 			return ErrInvalidSignature
 		}
@@ -306,28 +330,10 @@ func (tx *Transaction) VerifySig(find TxFinder) error {
 
 func splitBytes(buf []byte) (x, y *big.Int) {
 	l := len(buf)
-	x, y = &big.Int{}, &big.Int{}
+	x, y = new(big.Int), new(big.Int)
 	x.SetBytes(buf[:l/2])
 	y.SetBytes(buf[l/2:])
 	return
-}
-
-func (tx *Transaction) setInputs(sender key.Sender, spendable map[string][]int) error {
-	for txid, outIDs := range spendable {
-		txID, err := hex.DecodeString(txid)
-		if err != nil {
-			return err
-		}
-		for _, out := range outIDs {
-			tx.Inputs = append(tx.Inputs, &TxInput{
-				TxID:      txID,
-				OutIndex:  int32(out),
-				Signature: nil,
-				PubKey:    sender.PublicKey(),
-			})
-		}
-	}
-	return nil
 }
 
 // IsCoinbase will return true of the transaction
@@ -348,11 +354,7 @@ func txMerkleRoot(txs []*Transaction) ([]byte, error) {
 	hashes := make([][]byte, 0, len(txs))
 	hash := sha256.New()
 	for _, tx := range txs {
-		raw, err := proto.Marshal(tx)
-		if err != nil {
-			return nil, err
-		}
-		_, err = hash.Write(raw)
+		_, err := hash.Write(tx.hash())
 		if err != nil {
 			return nil, err
 		}
@@ -363,12 +365,23 @@ func txMerkleRoot(txs []*Transaction) ([]byte, error) {
 }
 
 func (tx *Transaction) hash() []byte {
-	b, err := proto.Marshal(tx)
-	if err != nil {
-		return nil
+	var (
+		b [8]byte
+		h = sha256.New()
+	)
+	for _, in := range tx.Inputs {
+		h.Write(in.PubKey)
+		h.Write(in.Signature)
+		h.Write(in.TxID)
+		binary.LittleEndian.PutUint64(b[:], uint64(in.OutIndex))
+		h.Write(b[:])
 	}
-	hash := sha256.Sum256(b)
-	return hash[:]
+	for _, out := range tx.Outputs {
+		h.Write(out.PubKeyHash)
+		binary.LittleEndian.PutUint64(b[:], out.Amount)
+		h.Write(b[:])
+	}
+	return h.Sum(nil)
 }
 
 func (out *TxOutput) isLockedWith(pubkeyhash []byte) bool {

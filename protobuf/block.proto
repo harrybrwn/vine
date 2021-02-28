@@ -26,19 +26,28 @@ message TxInput {
     // OutIndex gives the index of the output refrenced
     // with respect to the transaction's list of
     // outputs (0 being the transaction's first output and so on...)
-    int32 OutIndex = 2;
+    int32 outIndex = 2;
     // Signature is the digital signature of
     // the sender
-    bytes Signature = 3;
+    bytes signature = 3;
     // Public key of the sender
-    bytes PubKey = 4;
+    bytes pubKey = 4;
 }
 
 message TxOutput {
     // Amount holds the amount
     // of coins in the output
-    int64 Amount = 1;
+    uint64 amount = 1;
     // Hash of the recipient's public
     // key (see wallet package)
-    bytes PubKeyHash = 2;
+    bytes pubKeyHash = 2;
+
+    oneof payload {
+        // Token amount
+        uint64 token = 3;
+        // A document
+        string document = 4;
+        // Raw data
+        bytes data = 5;
+    }
 }
