@@ -6,7 +6,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/harrybrwn/go-ledger/key"
+	"github.com/harrybrwn/go-vine/key"
 )
 
 // UTXOSet holds unspent transaction outputs.

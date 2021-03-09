@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 
-	"github.com/harrybrwn/go-ledger/block"
-	"github.com/harrybrwn/go-ledger/key"
+	"github.com/harrybrwn/go-vine/block"
+	"github.com/harrybrwn/go-vine/key"
 )
 
 // Chain is an in memory blockchain used for testing

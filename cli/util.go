@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/harrybrwn/go-vine/key/wallet"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr-net"
@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	configDirName = "blk"
+	configDirName = "vine"
 )
 
 func initConfigDir(confdir, blockdir string) (err error) {
@@ -38,7 +38,7 @@ func initConfigDir(confdir, blockdir string) (err error) {
 
 func configDir() string {
 	var dir string
-	if dir = os.Getenv("BLK_CONFIG"); dir != "" {
+	if dir = os.Getenv("VINE_CONFIG"); dir != "" {
 		return dir
 	} else if dir = os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		dir = filepath.Join(dir, configDirName)
@@ -48,7 +48,7 @@ func configDir() string {
 		dir = filepath.Join(dir, "."+configDirName)
 	}
 	if dir == "" {
-		dir = "./.blk"
+		dir = "./.vine"
 	}
 	return dir
 }

@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-ledger/blockstore"
-	"github.com/harrybrwn/go-ledger/key/wallet"
-	"github.com/harrybrwn/go-ledger/node"
+	"github.com/harrybrwn/go-vine/blockstore"
+	"github.com/harrybrwn/go-vine/key/wallet"
+	"github.com/harrybrwn/go-vine/node"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"

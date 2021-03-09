@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/harrybrwn/go-ledger/cli"
-	"github.com/harrybrwn/go-ledger/internal"
+	"github.com/harrybrwn/go-vine/cli"
+	"github.com/harrybrwn/go-vine/internal"
 )
 
 //go:generate sh -c "go run $(pwd)/$GOFILE ../../build"

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/harrybrwn/go-ledger/key"
+	"github.com/harrybrwn/go-vine/key"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/mr-tron/base58"
 )

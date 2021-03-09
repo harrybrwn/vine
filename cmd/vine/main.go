@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/harrybrwn/go-ledger/cli"
+	"github.com/harrybrwn/go-vine/cli"
 	log "github.com/sirupsen/logrus"
 )
 

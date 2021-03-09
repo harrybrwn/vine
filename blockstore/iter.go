@@ -3,7 +3,7 @@ package blockstore
 import (
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-vine/block"
 )
 
 // Iter will return a block iterator.

@@ -6,10 +6,10 @@ HASH=$(shell cat $(GOFILES) go.mod go.sum | sha256sum | sed -Ee 's/\s|-//g')
 
 DATE=$(shell date -R)
 GOFLAGS=-ldflags "-w -s \
-		-X 'github.com/harrybrwn/go-ledger/cli.version=$(VERSION)' \
-		-X 'github.com/harrybrwn/go-ledger/cli.built=$(DATE)' \
-		-X 'github.com/harrybrwn/go-ledger/cli.commit=$(COMMIT)' \
-		-X 'github.com/harrybrwn/go-ledger/cli.hash=$(HASH)'"
+		-X 'github.com/harrybrwn/go-vine/cli.version=$(VERSION)' \
+		-X 'github.com/harrybrwn/go-vine/cli.built=$(DATE)' \
+		-X 'github.com/harrybrwn/go-vine/cli.commit=$(COMMIT)' \
+		-X 'github.com/harrybrwn/go-vine/cli.hash=$(HASH)'"
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
@@ -18,17 +18,15 @@ BINDIR=$$HOME/dev/go/bin
 
 GEN=block/block.pb.go node/node.pb.go
 
-blk: $(GEN)
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) ./cmd/blk
+vine: $(GEN)
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) ./cmd/vine
 
-all: blk blk-arm blk-darwin
-
-install: blk
-	@install ./blk $(BINDIR)
-	@rm ./blk
+install: vine
+	@install ./vine $(BINDIR)
+	@rm ./vine
 
 uninstall: $(GEN)
-	sudo rm $(BINDIR)/blk
+	sudo rm $(BINDIR)/vine
 
 systemd:
 	systemctl --user disable --now blk-ledger
@@ -40,15 +38,9 @@ gen: $(GEN)
 %.pb.go:
 	go generate ./...
 
-blk-arm: $(GEN)
-	GOARCH=arm GOARM=6 go build $(GOFLAGS) -o $@ ./cmd/blk
-
-blk-darwin: $(GEN)
-	GOOS=darwin go build $(GOFLAGS) -o $@ ./cmd/blk
-
 clean:
-	$(RM) -r build dist ./blk ./blkmine blk-arm blk-darwin
-	go clean -i ./cmd/blk
+	$(RM) -r build dist ./vine ./blk ./blkmine blk-arm blk-darwin
+	go clean -i ./cmd/vine
 
 cleanpb:
 	$(RM) $(shell find . -name '*.pb.go')

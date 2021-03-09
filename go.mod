@@ -1,4 +1,4 @@
-module github.com/harrybrwn/go-ledger
+module github.com/harrybrwn/go-vine
 
 go 1.16
 

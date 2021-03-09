@@ -12,7 +12,7 @@ import (
 	"math/big"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-ledger/key"
+	"github.com/harrybrwn/go-vine/key"
 )
 
 // ErrInvalidSignature is the error value given when a transaction has

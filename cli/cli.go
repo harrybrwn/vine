@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-ledger/internal"
-	"github.com/harrybrwn/go-ledger/internal/logging"
-	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/harrybrwn/go-vine/internal"
+	"github.com/harrybrwn/go-vine/internal/logging"
+	"github.com/harrybrwn/go-vine/key/wallet"
 	"github.com/harrybrwn/mdns"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/pkg/errors"
@@ -34,7 +34,7 @@ type Config struct {
 	NoColor  bool   `yaml:"nocolor"`
 
 	// Config is the config directory used for the cli
-	Config string `yaml:"config" env:"BLK_CONFIG"`
+	Config string `yaml:"config" env:"VINE_CONFIG"`
 
 	// Data directory (defaults to the same as the config dir)
 	Data string `yaml:"data"`
@@ -49,9 +49,9 @@ type GlobalFlags struct {
 // Flags are the GLOBAL flags... someone help me... why am i using globals
 var Flags GlobalFlags
 
-// New returns a new 'blk' root command
+// New returns a new 'vine' root command
 func New() *cobra.Command {
-	config.AddPath("$BLK_CONFIG")
+	config.AddPath("$VINE_CONFIG")
 	config.SetFilename("config.yml")
 	config.SetType("yaml")
 
@@ -62,7 +62,7 @@ func New() *cobra.Command {
 	if conf.Config != "" {
 		config.AddPath(conf.Config)
 	}
-	config.AddConfigDir("blk")
+	config.AddConfigDir("vine")
 	config.InitDefaults()
 
 	dir := config.DirUsed()
@@ -88,9 +88,9 @@ func New() *cobra.Command {
 	)
 
 	c := &cobra.Command{
-		Use:   "blk",
-		Short: "blk is a tool for managing a local blockchain network",
-		Long: `blk is a tool for managing a local blockchain network.
+		Use:   "vine",
+		Short: "vine is a tool for managing a local blockchain network",
+		Long: `vine is a tool for managing a local blockchain network.
 
 This is in very early stages of development and a public node
 should not be run. Trade currency on this blockchain at your own
@@ -190,7 +190,7 @@ func (se *StatusError) Error() string {
 
 // LogFile is the command line program log file
 var LogFile = &lumberjack.Logger{
-	Filename:   filepath.Join(os.TempDir(), "blk.log"),
+	Filename:   filepath.Join(os.TempDir(), "vine-debug.log"),
 	MaxSize:    500, // megabytes
 	MaxBackups: 10,  // number of spare files
 	MaxAge:     365, // days
@@ -207,7 +207,7 @@ func cliPreRun(conf *Config, globals *GlobalFlags, dir *string) func(*cobra.Comm
 		}
 
 		// Set the actual filename
-		LogFile.Filename = filepath.Join(conf.Config, "blk.log")
+		LogFile.Filename = filepath.Join(conf.Config, "debug.log")
 		var format log.Formatter = &log.TextFormatter{
 			ForceColors:            !conf.NoColor,
 			DisableColors:          conf.NoColor,
@@ -420,7 +420,7 @@ func indent(s string) string {
 }
 
 var commandTemplate = `Usage:
-{{if .Runnable}}
+{{ if (or .Runnable .HasAvailableSubCommands) }}
 	{{.UseLine}}{{end}}{{if gt (len .Aliases) 0}}
 
 Aliases:

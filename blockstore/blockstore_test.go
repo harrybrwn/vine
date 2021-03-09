@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/harrybrwn/go-ledger/block"
-	"github.com/harrybrwn/go-ledger/key"
-	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/harrybrwn/go-vine/block"
+	"github.com/harrybrwn/go-vine/key"
+	"github.com/harrybrwn/go-vine/key/wallet"
 	"github.com/sirupsen/logrus"
 )
 

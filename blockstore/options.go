@@ -2,7 +2,7 @@ package blockstore
 
 import (
 	badger "github.com/dgraph-io/badger/v2"
-	"github.com/harrybrwn/go-ledger/internal/logging"
+	"github.com/harrybrwn/go-vine/internal/logging"
 )
 
 // Opt is an option

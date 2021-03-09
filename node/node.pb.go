@@ -8,7 +8,7 @@ package node
 
 import (
 	proto "github.com/golang/protobuf/proto"
-	block "github.com/harrybrwn/go-ledger/block"
+	block "github.com/harrybrwn/go-vine/block"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"

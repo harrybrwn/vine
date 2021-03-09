@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-ledger/block"
-	"github.com/harrybrwn/go-ledger/p2p"
+	"github.com/harrybrwn/go-vine/block"
+	"github.com/harrybrwn/go-vine/p2p"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
@@ -28,13 +28,13 @@ import (
 
 const (
 	// DiscoveryTag is the mDNS discovery service tag
-	DiscoveryTag = "blk._tcp"
+	DiscoveryTag = "vine._tcp"
 	// DiscoveryTime is the time that the discovery service waits
 	// between restarts
 	DiscoveryTime = time.Second * 30
 
 	// GRPCProto is the default gRPC protocol
-	GRPCProto = "/blk/grpc/0.1"
+	GRPCProto = "/vine/grpc/0.1"
 )
 
 // Node is a node
@@ -111,7 +111,7 @@ func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node,
 	}
 
 	host.SetStreamHandlerMatch(
-		"/blk/head", regex(`^(/test|/protobuf|/proto|/json)?/blk/head$`),
+		"/vine/head", regex(`^(/test|/protobuf|/proto|/json)?/vine/head$`),
 		func(s network.Stream) {
 			defer s.Close()
 			// response for nodes getting the first block
@@ -136,7 +136,7 @@ func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node,
 	)
 
 	host.SetStreamHandlerMatch(
-		"/blk/test", regex(`^/blk/test(/[A-Za-z]+)?$`),
+		"/vine/test", regex(`^/vine/test(/[A-Za-z]+)?$`),
 		func(s network.Stream) {
 			s.Write([]byte("testing testing 123"))
 			s.Close()
@@ -144,13 +144,13 @@ func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node,
 	)
 
 	host.SetStreamHandlerMatch(
-		"/blk/block",
-		regex(`^/blk/block/.{65}?$`),
+		"/vine/block",
+		regex(`^/vine/block/.{65}?$`),
 		n.handleBlockStreamReq,
 	)
 
 	host.SetStreamHandler(
-		"/blk/chain",
+		"/vine/chain",
 		func(s network.Stream) {
 			defer s.Close()
 			err = sendChain(s, store)
@@ -161,7 +161,7 @@ func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node,
 	)
 
 	// listen for new transactions
-	host.SetStreamHandler("/blk/tx", func(s network.Stream) {
+	host.SetStreamHandler("/vine/tx", func(s network.Stream) {
 		log.WithFields(log.Fields{
 			"proto": s.Protocol(),
 		}).Info("tx received")

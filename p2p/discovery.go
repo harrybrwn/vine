@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/harrybrwn/go-ledger/internal/logging"
+	"github.com/harrybrwn/go-vine/internal/logging"
 	"github.com/harrybrwn/mdns"
 	"github.com/jackpal/gateway"
 	"github.com/libp2p/go-libp2p-core/host"

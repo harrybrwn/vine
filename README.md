@@ -1,11 +1,9 @@
-# <Project-Name-Here>
-
-Yeah, I don't have a good name for this project yet.
+# Vine
 
 ## Build
 
 ```sh
 go generate ./...
-go build ./cmd/blk
+go build ./cmd/vine
 ```
 

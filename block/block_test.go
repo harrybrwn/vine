@@ -15,8 +15,8 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-ledger/key"
-	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/harrybrwn/go-vine/key"
+	"github.com/harrybrwn/go-vine/key/wallet"
 )
 
 func init() {

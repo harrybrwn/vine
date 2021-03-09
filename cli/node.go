@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-ledger/block"
-	"github.com/harrybrwn/go-ledger/blockstore"
-	"github.com/harrybrwn/go-ledger/key"
-	"github.com/harrybrwn/go-ledger/key/wallet"
-	"github.com/harrybrwn/go-ledger/node"
-	"github.com/harrybrwn/go-ledger/p2p"
+	"github.com/harrybrwn/go-vine/block"
+	"github.com/harrybrwn/go-vine/blockstore"
+	"github.com/harrybrwn/go-vine/key"
+	"github.com/harrybrwn/go-vine/key/wallet"
+	"github.com/harrybrwn/go-vine/node"
+	"github.com/harrybrwn/go-vine/p2p"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -292,6 +292,7 @@ func newRPCCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "rpc",
 		Short: "Make rpc calls to the network",
+		// Run: func(cmd *cobra.Command, args []string) { cmd.Usage() },
 	}
 	c.AddCommand(
 		newRCPHeadCmd(),
@@ -336,7 +337,7 @@ func askFirstGRPCPeer(
 		}
 		conn, err := grpc.DialContext(
 			ctx, addr.ID.Pretty(),
-			grpc.WithContextDialer(node.GRPCDialer(host, "/blk/grpc/0.1")),
+			grpc.WithContextDialer(node.GRPCDialer(host, node.GRPCProto)),
 			grpc.WithInsecure(),
 		)
 		if err != nil {
@@ -429,7 +430,7 @@ func grpcClient(ctx context.Context) (node.BlockStoreClient, error) {
 	host.Connect(ctx, *addr)
 	conn, err := grpc.DialContext(
 		ctx, addr.ID.Pretty(),
-		grpc.WithContextDialer(node.GRPCDialer(host, "/blk/grpc/0.1")),
+		grpc.WithContextDialer(node.GRPCDialer(host, node.GRPCProto)),
 		grpc.WithInsecure(),
 	)
 	if err != nil {

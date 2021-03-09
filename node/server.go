@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 
-	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-vine/block"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )

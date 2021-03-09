@@ -2,7 +2,8 @@
 /bin/*
 /build/
 /dist/
-/blk* # binaries
+/blk*  # binaries
+/vine* # binaries
 /vendor/
 /build.sh
 **/*.pb.go # protobuf code gen

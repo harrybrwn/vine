@@ -6,9 +6,9 @@ import (
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-ledger/block"
-	"github.com/harrybrwn/go-ledger/internal/logging"
-	"github.com/harrybrwn/go-ledger/key"
+	"github.com/harrybrwn/go-vine/block"
+	"github.com/harrybrwn/go-vine/internal/logging"
+	"github.com/harrybrwn/go-vine/key"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )

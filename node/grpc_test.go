@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/harrybrwn/go-ledger/block"
-	"github.com/harrybrwn/go-ledger/blockstore"
-	"github.com/harrybrwn/go-ledger/internal/mockblock"
-	"github.com/harrybrwn/go-ledger/key/wallet"
+	"github.com/harrybrwn/go-vine/block"
+	"github.com/harrybrwn/go-vine/blockstore"
+	"github.com/harrybrwn/go-vine/internal/mockblock"
+	"github.com/harrybrwn/go-vine/key/wallet"
 	"github.com/harrybrwn/mdns"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/network"
@@ -20,7 +20,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const TestingProto = "/blk/grpc/test/0.1"
+const TestingProto = "/vine/grpc/test/0.1"
 
 func init() {
 	log.SetLevel(log.PanicLevel)
