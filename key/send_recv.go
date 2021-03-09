@@ -8,14 +8,14 @@ import (
 // objects that hold an address
 type Address interface {
 	Address() string
+
+	PubKeyHash() []byte
 }
 
 // Receiver defines an interface for objects that
 // are able to receive the contents of a transaction
-type Receiver interface {
-	Address
-	PubKeyHash() []byte
-}
+// This is only for smooth naming.
+type Receiver = Address
 
 // Sender defines an interface for
 // somthing that can send values through

@@ -1,18 +1,30 @@
+# Build
+/bin/*
+/build/
+/dist/
+/blk* # binaries
+/vendor/
+/build.sh
+**/*.pb.go # protobuf code gen
+
 # Misc
 /.vscode/
 *.mp4
 bitcoin.pdf
 
-# Build
-/bin/*
-/build/
-/blk*
-/vendor/
-
-# Temporary Hidden
-/build
-
 # Drafting
 /draft/
-TODO*
+
+# Managment and testing scripts
+/session.sh
+/deploy
+/up
+/down
+/test
+
+# Notes
+/notes/
 notes.txt
+notes.md
+TODO*
+

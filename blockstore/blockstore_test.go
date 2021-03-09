@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-ledger/key"
 	"github.com/harrybrwn/go-ledger/key/wallet"
 	"github.com/sirupsen/logrus"
 )
@@ -187,9 +188,8 @@ func testingStore(n int) (*BlockStore, string, error) {
 
 type addr string
 
-func (a addr) Address() string {
-	return string(a)
-}
+func (a addr) Address() string    { return string(a) }
+func (a addr) PubKeyHash() []byte { return key.ExtractPubKeyHash(string(a)) }
 
 func tempdir() string {
 	return filepath.Join(

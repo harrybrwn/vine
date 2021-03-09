@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math"
 	"math/big"
 
@@ -13,7 +12,13 @@ import (
 
 type hashDifficulty uint16
 
-var difficulty hashDifficulty = 16
+var difficulty hashDifficulty = 19
+
+// Hashable is an interface that defines
+// type that can be hashed.
+type Hashable interface {
+	Hash() []byte
+}
 
 // Provable is defines an interface for
 // block hashing
@@ -36,7 +41,7 @@ func ProofOfWork(block Provable) (nonce int64, hash []byte) {
 	var (
 		// integer representation of the block hash
 		inthash big.Int
-		// target = 1 << (256-difficulty)
+		// 1 << (256-difficulty)
 		target = new(big.Int).Lsh(big.NewInt(1), uint(256-difficulty))
 	)
 	// while nonce does not overflow
@@ -70,7 +75,7 @@ func HasDoneWork(block MabyeProved) bool {
 		panic(fmt.Sprintf("could not hash block: %v", err))
 	}
 	inthash.SetBytes(hash)
-	// return hash < target
+	// hash < target
 	return inthash.Cmp(target) == -1
 }
 
@@ -87,29 +92,38 @@ func hashBlockE(difficulty hashDifficulty, nonce int64, block Provable) ([]byte,
 	}
 	merkleRoot, err := txMerkleRoot(block.GetTransactions())
 	if err != nil {
-		return nil, err
+		return hash.Sum(nil), err
 	}
-	hash.Write(merkleRoot)
+	_, err = hash.Write(merkleRoot)
 	_, err1 = hash.Write(block.GetData())
 	_, err2 = hash.Write(block.GetPrevHash())
-	return hash.Sum(nil), errs.Pair(err1, err2)
+	return hash.Sum(nil), errs.Chain(err, err1, err2)
 }
 
 // hashBlock is an optimized version of hashBlockE which does not
 // check possible errors
 func hashBlock(difficulty hashDifficulty, nonce int64, block Provable) []byte {
-	var hash = sha256.New()
-	binary.Write(hash, binary.BigEndian, difficulty)
-	binary.Write(hash, binary.BigEndian, nonce)
-	merkleRoot, _ := txMerkleRoot(block.GetTransactions())
-	hash.Write(merkleRoot)
-	hash.Write(block.GetData())
-	hash.Write(block.GetPrevHash())
-	return hash.Sum([]byte{})
+	hash, _ := hashBlockE(difficulty, nonce, block)
+	return hash
 }
 
-func logiferr(e error) {
-	if e != nil {
-		log.Panic(e)
+func blockHashInt(inthash *big.Int, difficulty hashDifficulty, nonce int64, block Provable) error {
+	var (
+		hash            = sha256.New()
+		err, err1, err2 error
+	)
+	err1 = binary.Write(hash, binary.BigEndian, difficulty)
+	err2 = binary.Write(hash, binary.BigEndian, nonce)
+	if err = errs.Pair(err1, err2); err != nil {
+		return err
 	}
+	merkleRoot, err := txMerkleRoot(block.GetTransactions())
+	if err != nil {
+		return err
+	}
+	_, err = hash.Write(merkleRoot)
+	_, err1 = hash.Write(block.GetData())
+	_, err2 = hash.Write(block.GetPrevHash())
+	inthash.SetBytes(hash.Sum(nil))
+	return errs.Chain(err, err1, err2)
 }

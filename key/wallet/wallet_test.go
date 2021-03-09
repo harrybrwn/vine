@@ -78,8 +78,8 @@ func TestReadWrite(t *testing.T) {
 	if w.priv.Y.Cmp(wt.priv.Y) != 0 {
 		t.Error("private key Y was changed")
 	}
-	k := w.PrivKey()
-	k2 := wt.PrivKey()
+	k := w.privKey()
+	k2 := wt.privKey()
 	if !k.Equals(k2) {
 		t.Error("wallet privet keys different when changed to a crypto key")
 	}

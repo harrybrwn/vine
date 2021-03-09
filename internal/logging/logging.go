@@ -7,6 +7,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// TODO write a Recover function that recovers from a panic, grabs
+// the stack frame to write to the logger and then panics again.
+
 // Logger is a basic logger
 type Logger interface {
 	Errorf(string, ...interface{})
@@ -45,7 +48,7 @@ type logfilehook struct {
 }
 
 func (lf *logfilehook) Levels() []log.Level {
-	return log.AllLevels[:lf.level+1]
+	return log.AllLevels //[:lf.level+1]
 }
 
 func (lf *logfilehook) Fire(e *log.Entry) error {
@@ -118,17 +121,20 @@ func (hook *Hook) Levels() []log.Level {
 	return hook.LogLevels
 }
 
-// This is the ioutil.Discard of loggers
+// Discard an logs sent to this logger
+var Discard Logger = &discardLogger{}
+
+// This is the io.Discard of loggers
 type discardLogger struct{}
 
 // Errorf does nothing
-func Errorf(string, ...interface{}) {}
+func (*discardLogger) Errorf(string, ...interface{}) {}
 
 // Warningf does nothing
-func Warningf(string, ...interface{}) {}
+func (*discardLogger) Warningf(string, ...interface{}) {}
 
 // Infof does nothing
-func Infof(string, ...interface{}) {}
+func (*discardLogger) Infof(string, ...interface{}) {}
 
 // Debugf does nothing
-func Debugf(string, ...interface{}) {}
+func (*discardLogger) Debugf(string, ...interface{}) {}

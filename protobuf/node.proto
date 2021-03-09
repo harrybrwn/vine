@@ -6,16 +6,53 @@ option go_package = "github.com/harrybrwn/go-ledger/node;node";
 
 import "protobuf/block.proto";
 
+message Status {
+    enum StatusCode {
+        Ok = 0;
+        Err = 1;
+    }
+    StatusCode code = 1;
+    string status = 2;
+}
+
 message BlockMsg {
-    string Sender     = 1;
-    block.Block Block = 2;
-    string ErrorMsg   = 3;
+    string sender     = 1;
+    block.Block block = 2;
+    string error      = 3;
+}
+
+message TxMsg {
+    string sender = 1;
+    block.Transaction tx = 2;
+    string error = 3;
 }
 
 message BlockReq {
-    bytes Hash = 1;
+    bytes hash = 1;
 }
 
-service GetBlock {
-    rpc Block(BlockReq) returns (BlockMsg) {}
+message TxReq {
+    bytes hash = 1;
+}
+
+message Empty { }
+
+service BlockStore {
+    // Get a block by hash
+    rpc getBlock(BlockReq) returns (BlockMsg) {}
+
+    // Get a transaction by id
+    rpc getTx(TxReq) returns (TxMsg) {}
+
+    // Ask for the head of the chain
+    rpc head(Empty) returns (BlockMsg) {}
+
+    // Ask for the base of the chain
+    rpc base(Empty) returns (BlockMsg) {}
+
+    // Send and receive new transactions
+    rpc tx(TxMsg) returns (Status) {}
+
+    // Send and receive new mined blocks
+    rpc mined(BlockMsg) returns (Status) {}
 }

@@ -2,10 +2,12 @@ package blockstore
 
 import (
 	"bytes"
+	"time"
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/golang/protobuf/proto"
 	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-ledger/internal/logging"
 	"github.com/harrybrwn/go-ledger/key"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -29,13 +31,25 @@ func CreateEmpty(dir string) error {
 }
 
 // Open will open an existing database
-func Open(dir string) (*BlockStore, error) {
+func Open(dir string, options ...Opt) (*BlockStore, error) {
 	opts := badger.DefaultOptions(dir)
-	opts.Logger = logrus.StandardLogger()
+	logger := logging.Copy()
+	logger.Formatter = &logging.PrefixedFormatter{
+		Prefix:     "block-storage",
+		TimeFormat: time.RFC3339,
+	}
+	opts.Logger = logger
+
+	for _, o := range options {
+		o(&opts)
+	}
+
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, err
 	}
+	opts.Logger.Debugf("blockstore opened at %s", dir)
+
 	var head []byte
 	err = db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(headKey)

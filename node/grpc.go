@@ -11,7 +11,7 @@ import (
 	manet "github.com/multiformats/go-multiaddr-net"
 )
 
-func newStreamListener(ctx context.Context, h host.Host) *streamListener {
+func newStreamListener(ctx context.Context, h host.Host, proto protocol.ID) *streamListener {
 	ctx, cancel := context.WithCancel(ctx)
 	l := &streamListener{
 		host:    h,
@@ -19,7 +19,10 @@ func newStreamListener(ctx context.Context, h host.Host) *streamListener {
 		ctx:     ctx,
 		cancel:  cancel,
 	}
-	h.SetStreamHandler("/grpc/0.1", l.streamHandler)
+	if proto == "" {
+		proto = "/grpc/0.1"
+	}
+	h.SetStreamHandler(proto, l.streamHandler)
 	return l
 }
 
@@ -37,7 +40,7 @@ func GRPCDialer(h host.Host, proto ...protocol.ID) func(context.Context, string)
 		if err != nil {
 			return nil, err
 		}
-		return newStreamConn(s), nil
+		return newStreamConn(s)
 	}
 }
 
@@ -62,7 +65,7 @@ func (sl *streamListener) Accept() (net.Conn, error) {
 		sl.cancel()
 		return nil, sl.ctx.Err()
 	case s := <-sl.streams:
-		return newStreamConn(s), nil
+		return newStreamConn(s)
 	}
 }
 
@@ -81,14 +84,20 @@ func (sl *streamListener) Addr() net.Addr {
 	return nil
 }
 
-func newStreamConn(s network.Stream) *streamConn {
-	local, _ := manet.ToNetAddr(s.Conn().LocalMultiaddr())
-	remote, _ := manet.ToNetAddr(s.Conn().RemoteMultiaddr())
+func newStreamConn(s network.Stream) (*streamConn, error) {
+	local, err := manet.ToNetAddr(s.Conn().LocalMultiaddr())
+	if err != nil {
+		return nil, err
+	}
+	remote, err := manet.ToNetAddr(s.Conn().RemoteMultiaddr())
+	if err != nil {
+		return nil, err
+	}
 	return &streamConn{
 		Stream: s,
 		local:  local,
 		remote: remote,
-	}
+	}, nil
 }
 
 type streamConn struct {

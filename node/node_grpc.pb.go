@@ -13,76 +13,268 @@ import (
 // is compatible with the grpc package it is being compiled against.
 const _ = grpc.SupportPackageIsVersion6
 
-// GetBlockClient is the client API for GetBlock service.
+// BlockStoreClient is the client API for BlockStore service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type GetBlockClient interface {
-	Block(ctx context.Context, in *BlockReq, opts ...grpc.CallOption) (*BlockMsg, error)
+type BlockStoreClient interface {
+	// Get a block by hash
+	GetBlock(ctx context.Context, in *BlockReq, opts ...grpc.CallOption) (*BlockMsg, error)
+	// Get a transaction by id
+	GetTx(ctx context.Context, in *TxReq, opts ...grpc.CallOption) (*TxMsg, error)
+	// Ask for the head of the chain
+	Head(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*BlockMsg, error)
+	// Ask for the base of the chain
+	Base(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*BlockMsg, error)
+	// Send and receive new transactions
+	Tx(ctx context.Context, in *TxMsg, opts ...grpc.CallOption) (*Status, error)
+	// Send and receive new mined blocks
+	Mined(ctx context.Context, in *BlockMsg, opts ...grpc.CallOption) (*Status, error)
 }
 
-type getBlockClient struct {
+type blockStoreClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewGetBlockClient(cc grpc.ClientConnInterface) GetBlockClient {
-	return &getBlockClient{cc}
+func NewBlockStoreClient(cc grpc.ClientConnInterface) BlockStoreClient {
+	return &blockStoreClient{cc}
 }
 
-func (c *getBlockClient) Block(ctx context.Context, in *BlockReq, opts ...grpc.CallOption) (*BlockMsg, error) {
+func (c *blockStoreClient) GetBlock(ctx context.Context, in *BlockReq, opts ...grpc.CallOption) (*BlockMsg, error) {
 	out := new(BlockMsg)
-	err := c.cc.Invoke(ctx, "/node.GetBlock/Block", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/node.BlockStore/getBlock", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// GetBlockServer is the server API for GetBlock service.
-// All implementations must embed UnimplementedGetBlockServer
+func (c *blockStoreClient) GetTx(ctx context.Context, in *TxReq, opts ...grpc.CallOption) (*TxMsg, error) {
+	out := new(TxMsg)
+	err := c.cc.Invoke(ctx, "/node.BlockStore/getTx", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blockStoreClient) Head(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*BlockMsg, error) {
+	out := new(BlockMsg)
+	err := c.cc.Invoke(ctx, "/node.BlockStore/head", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blockStoreClient) Base(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*BlockMsg, error) {
+	out := new(BlockMsg)
+	err := c.cc.Invoke(ctx, "/node.BlockStore/base", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blockStoreClient) Tx(ctx context.Context, in *TxMsg, opts ...grpc.CallOption) (*Status, error) {
+	out := new(Status)
+	err := c.cc.Invoke(ctx, "/node.BlockStore/tx", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *blockStoreClient) Mined(ctx context.Context, in *BlockMsg, opts ...grpc.CallOption) (*Status, error) {
+	out := new(Status)
+	err := c.cc.Invoke(ctx, "/node.BlockStore/mined", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// BlockStoreServer is the server API for BlockStore service.
+// All implementations must embed UnimplementedBlockStoreServer
 // for forward compatibility
-type GetBlockServer interface {
-	Block(context.Context, *BlockReq) (*BlockMsg, error)
-	mustEmbedUnimplementedGetBlockServer()
+type BlockStoreServer interface {
+	// Get a block by hash
+	GetBlock(context.Context, *BlockReq) (*BlockMsg, error)
+	// Get a transaction by id
+	GetTx(context.Context, *TxReq) (*TxMsg, error)
+	// Ask for the head of the chain
+	Head(context.Context, *Empty) (*BlockMsg, error)
+	// Ask for the base of the chain
+	Base(context.Context, *Empty) (*BlockMsg, error)
+	// Send and receive new transactions
+	Tx(context.Context, *TxMsg) (*Status, error)
+	// Send and receive new mined blocks
+	Mined(context.Context, *BlockMsg) (*Status, error)
+	mustEmbedUnimplementedBlockStoreServer()
 }
 
-// UnimplementedGetBlockServer must be embedded to have forward compatible implementations.
-type UnimplementedGetBlockServer struct {
+// UnimplementedBlockStoreServer must be embedded to have forward compatible implementations.
+type UnimplementedBlockStoreServer struct {
 }
 
-func (*UnimplementedGetBlockServer) Block(context.Context, *BlockReq) (*BlockMsg, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Block not implemented")
+func (*UnimplementedBlockStoreServer) GetBlock(context.Context, *BlockReq) (*BlockMsg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetBlock not implemented")
 }
-func (*UnimplementedGetBlockServer) mustEmbedUnimplementedGetBlockServer() {}
+func (*UnimplementedBlockStoreServer) GetTx(context.Context, *TxReq) (*TxMsg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetTx not implemented")
+}
+func (*UnimplementedBlockStoreServer) Head(context.Context, *Empty) (*BlockMsg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Head not implemented")
+}
+func (*UnimplementedBlockStoreServer) Base(context.Context, *Empty) (*BlockMsg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Base not implemented")
+}
+func (*UnimplementedBlockStoreServer) Tx(context.Context, *TxMsg) (*Status, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Tx not implemented")
+}
+func (*UnimplementedBlockStoreServer) Mined(context.Context, *BlockMsg) (*Status, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Mined not implemented")
+}
+func (*UnimplementedBlockStoreServer) mustEmbedUnimplementedBlockStoreServer() {}
 
-func RegisterGetBlockServer(s *grpc.Server, srv GetBlockServer) {
-	s.RegisterService(&_GetBlock_serviceDesc, srv)
+func RegisterBlockStoreServer(s *grpc.Server, srv BlockStoreServer) {
+	s.RegisterService(&_BlockStore_serviceDesc, srv)
 }
 
-func _GetBlock_Block_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _BlockStore_GetBlock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BlockReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GetBlockServer).Block(ctx, in)
+		return srv.(BlockStoreServer).GetBlock(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/node.GetBlock/Block",
+		FullMethod: "/node.BlockStore/GetBlock",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GetBlockServer).Block(ctx, req.(*BlockReq))
+		return srv.(BlockStoreServer).GetBlock(ctx, req.(*BlockReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-var _GetBlock_serviceDesc = grpc.ServiceDesc{
-	ServiceName: "node.GetBlock",
-	HandlerType: (*GetBlockServer)(nil),
+func _BlockStore_GetTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TxReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlockStoreServer).GetTx(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/node.BlockStore/GetTx",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlockStoreServer).GetTx(ctx, req.(*TxReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlockStore_Head_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlockStoreServer).Head(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/node.BlockStore/Head",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlockStoreServer).Head(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlockStore_Base_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlockStoreServer).Base(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/node.BlockStore/Base",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlockStoreServer).Base(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlockStore_Tx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TxMsg)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlockStoreServer).Tx(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/node.BlockStore/Tx",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlockStoreServer).Tx(ctx, req.(*TxMsg))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BlockStore_Mined_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BlockMsg)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BlockStoreServer).Mined(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/node.BlockStore/Mined",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BlockStoreServer).Mined(ctx, req.(*BlockMsg))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+var _BlockStore_serviceDesc = grpc.ServiceDesc{
+	ServiceName: "node.BlockStore",
+	HandlerType: (*BlockStoreServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Block",
-			Handler:    _GetBlock_Block_Handler,
+			MethodName: "getBlock",
+			Handler:    _BlockStore_GetBlock_Handler,
+		},
+		{
+			MethodName: "getTx",
+			Handler:    _BlockStore_GetTx_Handler,
+		},
+		{
+			MethodName: "head",
+			Handler:    _BlockStore_Head_Handler,
+		},
+		{
+			MethodName: "base",
+			Handler:    _BlockStore_Base_Handler,
+		},
+		{
+			MethodName: "tx",
+			Handler:    _BlockStore_Tx_Handler,
+		},
+		{
+			MethodName: "mined",
+			Handler:    _BlockStore_Mined_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

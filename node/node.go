@@ -1,6 +1,6 @@
-//go:generate protoc -I../protobuf -I.. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. ../protobuf/node.proto
-
 package node
+
+//go:generate protoc -I../protobuf -I.. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. ../protobuf/node.proto
 
 import (
 	"context"
@@ -15,10 +15,12 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/harrybrwn/go-ledger/block"
 	"github.com/harrybrwn/go-ledger/p2p"
+	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/protocol"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -26,27 +28,74 @@ import (
 
 const (
 	// DiscoveryTag is the mDNS discovery service tag
-	DiscoveryTag = "blk-discovery._tcp"
+	DiscoveryTag = "blk._tcp"
 	// DiscoveryTime is the time that the discovery service waits
 	// between restarts
 	DiscoveryTime = time.Second * 30
+
+	// GRPCProto is the default gRPC protocol
+	GRPCProto = "/blk/grpc/0.1"
 )
 
 // Node is a node
 type Node struct {
-	host     host.Host
-	store    block.Store
+	host  host.Host
+	store block.Store
+	txdb  block.TxFinder
+
 	newPeers <-chan peer.AddrInfo
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	errs   chan error
+
+	// Set of transaction IDs (encoded as hex) that have been received
+	// from the network.
+	// TODO implement this
+	txCache map[string]struct{}
+
+	UnimplementedBlockStoreServer
+}
+
+// New will create a partial node
+func New(ctx context.Context, host host.Host) (*Node, error) {
+	ctx, stop := context.WithCancel(ctx)
+	disc := p2p.Discovery{
+		Host:     host,
+		Service:  DiscoveryTag,
+		Duration: DiscoveryTime,
+	}
+	ch, err := disc.StartContext(ctx)
+	if err != nil {
+		stop()
+		return nil, err
+	}
+	n := &Node{
+		host:     host,
+		ctx:      ctx,
+		newPeers: ch,
+		errs:     make(chan error),
+		cancel:   stop,
+		store:    nil,
+	}
+	return n, nil
+}
+
+// This is temporary
+type blockStoreTxdb interface {
+	block.Store
+	block.TxFinder
 }
 
 // FullNode will run a full node
-func FullNode(ctx context.Context, host host.Host, store block.Store) (*Node, error) {
+func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node, error) {
 	ctx, stop := context.WithCancel(ctx)
-	ch, err := p2p.StartDiscovery(ctx, host, DiscoveryTag, DiscoveryTime)
+	discovery := p2p.Discovery{
+		Host:     host,
+		Service:  DiscoveryTag,
+		Duration: DiscoveryTime,
+	}
+	ch, err := discovery.StartContext(ctx)
 	if err != nil {
 		stop()
 		return nil, err
@@ -55,6 +104,7 @@ func FullNode(ctx context.Context, host host.Host, store block.Store) (*Node, er
 		host:     host,
 		ctx:      ctx,
 		store:    store,
+		txdb:     store,
 		newPeers: ch,
 		cancel:   stop,
 		errs:     make(chan error),
@@ -99,8 +149,22 @@ func FullNode(ctx context.Context, host host.Host, store block.Store) (*Node, er
 		n.handleBlockStreamReq,
 	)
 
+	host.SetStreamHandler(
+		"/blk/chain",
+		func(s network.Stream) {
+			defer s.Close()
+			err = sendChain(s, store)
+			if err != nil {
+				log.WithError(err).Error("could not marshal chain into json")
+			}
+		},
+	)
+
+	// listen for new transactions
 	host.SetStreamHandler("/blk/tx", func(s network.Stream) {
-		// listen for new transactions
+		log.WithFields(log.Fields{
+			"proto": s.Protocol(),
+		}).Info("tx received")
 	})
 
 	return n, nil
@@ -111,11 +175,10 @@ func (n *Node) Start() error {
 	// start local discovery
 	go n.discover()
 	go func() {
-		for {
-			select {
-			case err := <-n.errs:
-				log.Error(err)
-			}
+		for err := range n.errs {
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Error("node: discovery error")
 		}
 	}()
 	return nil
@@ -123,8 +186,8 @@ func (n *Node) Start() error {
 
 // StartWithGRPC will start the node and listen for requests
 // from the network with a grpc server.
-func (n *Node) StartWithGRPC(srv *grpc.Server) error {
-	l := newStreamListener(n.ctx, n.host)
+func (n *Node) StartWithGRPC(srv *grpc.Server, proto protocol.ID) error {
+	l := newStreamListener(n.ctx, n.host, proto)
 	go func() {
 		err := srv.Serve(l)
 		if err != nil {
@@ -145,20 +208,114 @@ func (n *Node) Close() error {
 	return n.host.Close()
 }
 
+// Peers returns a slice of peer ids that are addressable
+func (n *Node) Peers() peer.IDSlice {
+	hostid := n.host.ID()
+	ids := n.host.Peerstore().PeersWithAddrs()
+	peers := make(peer.IDSlice, 0, len(ids))
+	for _, id := range ids {
+		if id == hostid {
+			continue
+		}
+		peers = append(peers, id)
+	}
+	return peers
+}
+
+// PeerAddrs will iterate through the node's peers and
+// collect their addresses.
+func (n *Node) PeerAddrs() []multiaddr.Multiaddr {
+	hostid := n.host.ID()
+	addrs := make([]multiaddr.Multiaddr, 0)
+	for _, id := range n.host.Peerstore().PeersWithAddrs() {
+		if id == hostid {
+			continue
+		}
+		for _, a := range n.host.Peerstore().Addrs(id) {
+			addrs = append(addrs, a)
+		}
+	}
+	return addrs
+}
+
+// GetHeadBlock will get the head block from the network
+func (n *Node) GetHeadBlock() (*block.Block, error) {
+	opts := []grpc.DialOption{
+		grpc.WithInsecure(),
+		grpc.WithContextDialer(GRPCDialer(n.host, GRPCProto)),
+	}
+	ctx, cancel := context.WithCancel(n.ctx)
+	defer cancel()
+	for _, p := range n.Peers() {
+		conn, err := grpc.DialContext(ctx, p.Pretty(), opts...)
+		if err != nil {
+			log.Warning(err)
+			continue
+		}
+		client := NewBlockStoreClient(conn)
+		msg, err := client.Head(ctx, &Empty{})
+		if err != nil {
+			continue
+		}
+		return msg.Block, nil
+	}
+	return nil, errors.New("did not find head block")
+}
+
+// BroadcastTx will broadcast a transaction to all the node's peers
+func (n *Node) BroadcastTx(tx *block.Transaction) error {
+	opts := []grpc.DialOption{
+		grpc.WithInsecure(),
+		grpc.WithContextDialer(GRPCDialer(n.host, GRPCProto)),
+	}
+	for _, p := range n.Peers() {
+		conn, err := grpc.DialContext(n.ctx, p.Pretty(), opts...)
+		if err != nil {
+			log.WithFields(log.Fields{"error": err, "peer": p}).Error("could not dial peer")
+			continue
+		}
+		client := NewBlockStoreClient(conn)
+		status, err := client.Tx(n.ctx, &TxMsg{Sender: n.host.ID().Pretty(), Tx: tx})
+		if err != nil {
+			log.WithError(err).Error("could not send transaciton")
+			continue
+		}
+		log.WithFields(log.Fields{
+			"code":     status.Code,
+			"status":   status.Status,
+			"receiver": p,
+		}).Info("transaction sent")
+	}
+	return nil
+}
+
 func (n *Node) discover() {
 	net := n.host.Network()
+	emiter, err := n.host.EventBus().Emitter(&event.EvtPeerConnectednessChanged{})
+	if err != nil {
+		log.WithError(err).Error("could not create connectedness event, shutting down discovery")
+		return
+	}
 	for addr := range n.newPeers {
 		if addr.ID == n.host.ID() {
 			log.Trace("blocked self discovery")
 			continue
 		}
 		if net.Connectedness(addr.ID) == network.Connected {
+			// if we are already connected to this address then skip it
 			continue
 		}
-		log.Infof("connecting to %s", addr.ID.Pretty())
 		if err := n.host.Connect(n.ctx, addr); err != nil {
-			n.errs <- err
-			log.WithError(err).Warnf("could not connect to %s", addr.ID.Pretty())
+			log.WithError(err).WithFields(addr.Loggable()).Errorf(
+				"could not connect to %s", addr.ID.Pretty())
+			continue
+		}
+		err = emiter.Emit(event.EvtPeerConnectednessChanged{
+			Peer:          addr.ID,
+			Connectedness: network.Connected,
+		})
+		if err != nil {
+			log.WithError(err).Warn("could not emit connected event")
 		}
 	}
 }
@@ -221,6 +378,24 @@ func sendBlock(protocol string, blk *block.Block, s network.Stream) error {
 		"to":       conn.RemotePeer().Pretty(),
 		"hash":     hex.EncodeToString(blk.Hash),
 	}).Info("sent block")
+	return err
+}
+
+func sendChain(s network.Stream, store block.Store) error {
+	blocks := make([]*block.Block, 0)
+	it := store.Iter()
+	for {
+		blk := it.Next()
+		blocks = append(blocks, blk)
+		if block.IsGenisis(blk) {
+			break
+		}
+	}
+	b, err := json.MarshalIndent(blocks, "  ", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = s.Write(b)
 	return err
 }
 

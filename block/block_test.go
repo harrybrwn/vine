@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mathrand "math/rand"
 	"reflect"
 	"testing"
 
@@ -21,6 +22,7 @@ import (
 func init() {
 	difficulty = 6
 	// difficulty = 16
+	// difficulty = 18
 }
 
 type testUser struct {
@@ -36,6 +38,16 @@ func users(n int) []*testUser {
 	return u
 }
 
+func testWallet(t *testing.T, seed int64) *wallet.Wallet {
+	t.Helper()
+	gen := mathrand.New(mathrand.NewSource(seed))
+	key, err := ecdsa.GenerateKey(elliptic.P256(), gen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wallet.FromKey(key)
+}
+
 type testChain struct {
 	*chain
 	users []*wallet.Wallet
@@ -43,8 +55,22 @@ type testChain struct {
 
 func Test(t *testing.T) {
 	t.Skip()
+	difficulty = 30
+	b := &Block{
+		Data:         []byte("Genesis block"),
+		Transactions: []*Transaction{},
+	}
+	b.Nonce, b.Hash = ProofOfWork(b)
+	fmt.Printf("difficulty: %d\n", difficulty)
+	fmt.Printf("nonce:      %d\n", b.Nonce)
+	fmt.Printf("hash:       %#v\n", b.Hash)
+	gen := DefaultGenesis()
+	fmt.Println("reproducable:", bytes.Compare(b.Hash, gen.Hash) == 0 && b.Nonce == gen.Nonce)
+	fmt.Println("is default genesis block:", IsDefaultGenesis(b))
+
 	user := users(5)
 	c := newChain(user[0])
+	fmt.Printf("%x\n", c.blocks[0].Hash)
 	c.pushblock(&Transaction{
 		Inputs:  []*TxInput{{TxID: nil, OutIndex: -1, Signature: nil}},
 		Outputs: []*TxOutput{{Amount: 50, PubKeyHash: user[4].PubKeyHash()}},
@@ -69,13 +95,19 @@ func Test(t *testing.T) {
 func TestBlock(t *testing.T) {
 	addr := wallet.New()
 	c := newChain(addr)
-	c.Push("1")
+	push := func(data string) {
+		bytedata := []byte(data)
+		prev := c.blocks[len(c.blocks)-1]
+		b := prev.CreateNext(bytedata)
+		c.append(b)
+	}
+	push("1")
 	if len(c.blocks) != 2 {
 		t.Error("should have length 1")
 	}
-	c.Push("this is a test")
+	push("this is a test")
 	for i := 0; i < 5; i++ {
-		c.Push(fmt.Sprintf("test number %d", i))
+		push(fmt.Sprintf("test number %d", i))
 	}
 	for i := 0; i < len(c.blocks)-1; i++ {
 		b := c.blocks[i]
@@ -96,7 +128,8 @@ func TestPOW(t *testing.T) {
 	)
 	nonce, hash := ProofOfWork(block)
 	if nonce == 0 {
-		t.Errorf("nonce should probably no be zero: hash = %x", hash)
+		// TODO this error is triggered every once in a while, try to reproduce it
+		t.Errorf(`nonce should probably no be zero: nonce = %d, hash = %x`, nonce, hash)
 	}
 	if len(hash) != 32 {
 		t.Error("hash should be 32 bytes long")
@@ -115,28 +148,20 @@ func TestBuildStats(t *testing.T) {
 	eq, check := helpers(t)
 	harry := wallet.New()
 	jim := wallet.New()
-	keyharry := hex.EncodeToString(harry.PubKeyHash())
-	keyjim := hex.EncodeToString(jim.PubKeyHash())
 	c := newChain(harry)
 
 	check(c.addTx(jim, harry, 5))
 	stats := buildChainStats(c.Iter())
-	eq(stats.balances[keyharry], coinbaseValue-5)
-	eq(stats.balances[keyjim], 5)
 	eq(stats.Bal(jim), 5)
 	eq(stats.Bal(harry), coinbaseValue-5)
 
 	check(c.addTx(jim, harry, 90))
 	stats = buildChainStats(c.Iter())
-	eq(stats.balances[keyharry], 5)
-	eq(stats.balances[keyjim], 95)
 	eq(stats.Bal(harry), 5)
 	eq(stats.Bal(jim), 95)
 
 	check(c.addTx(harry, jim, 45))
 	stats = buildChainStats(c.Iter())
-	eq(stats.balances[keyharry], 50)
-	eq(stats.balances[keyjim], 50)
 	eq(stats.Bal(harry), 50)
 	eq(stats.Bal(jim), 50)
 }
@@ -211,6 +236,65 @@ func TestGetSpendableOutputs(t *testing.T) {
 	}
 }
 
+func TestBasicTransations(t *testing.T) {
+	eq, check := helpers(t)
+	user1, user2, user3 := testWallet(t, 1), testWallet(t, 2), testWallet(t, 3)
+	c := newChain(user1)
+	s := buildChainStats(c.Iter())
+	eq(s.Bal(user1), coinbaseValue)
+	eq(s.Bal(user2), 0)
+	eq(s.Bal(user3), 0)
+	check(c.pushWithStats(s, []TxDesc{{user1, user2, 10}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 90)
+	eq(s.Bal(user2), 10)
+	eq(s.Bal(user3), 0)
+
+	check(c.push([]TxDesc{{From: user1, To: user3, Amount: 50}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 40)
+	eq(s.Bal(user2), 10)
+	eq(s.Bal(user3), 50)
+
+	check(c.push([]TxDesc{{From: user2, To: user3, Amount: 5}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 40)
+	eq(s.Bal(user2), 5)
+	eq(s.Bal(user3), 55)
+
+	check(c.push([]TxDesc{{From: user1, To: user3, Amount: 5}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 35)
+	eq(s.Bal(user2), 5)
+	eq(s.Bal(user3), 60)
+
+	check(c.push([]TxDesc{{From: user3, To: user2, Amount: 7}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 35)
+	eq(s.Bal(user2), 5+7)
+	if s.Bal(user3) != 60-7 {
+		t.Errorf(`
+            Chain stats did not find the correct
+            balance when user spents from multiple UTXOs.
+            want: %d, got %d`, 60-15, s.Bal(user3),
+		)
+	}
+
+	err := c.push([]TxDesc{{From: user3, To: user2, Amount: 100}})
+	if err == nil {
+		t.Error("should return error when attempting to overspend")
+	}
+
+	check(c.push([]TxDesc{
+		{From: user1, To: user2, Amount: 10},
+		{From: user3, To: user2, Amount: 10},
+	}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 25)
+	eq(s.Bal(user2), 32)
+	eq(s.Bal(user3), 43)
+}
+
 func TestTransaction(t *testing.T) {
 	eq, check := helpers(t)
 	user1, user2, user3 := wallet.New(), wallet.New(), wallet.New()
@@ -229,8 +313,8 @@ func TestTransaction(t *testing.T) {
 	// user1 pays 5  to user2
 	// user2 pays 10 to user3
 	check(c.push([]TxDesc{
-		{user1, user2, 5},
-		{user2, user3, 10},
+		{From: user1, To: user2, Amount: 5},
+		{From: user2, To: user3, Amount: 10},
 	}))
 	s = buildChainStats(c.Iter())
 	eq(s.Bal(user1), 85)
@@ -238,12 +322,12 @@ func TestTransaction(t *testing.T) {
 	eq(s.Bal(user3), 10)
 	eq(s.Bal(user1)+s.Bal(user2)+s.Bal(user3), coinbaseValue)
 
-	tx := &Transaction{}
 	// user1 pays 25 to user2
 	// user3 pays 5  to user2
-	check(initTransaction(c, s, tx, TxDesc{user3, user2, 5}))
-	check(initTransaction(c, s, tx, TxDesc{user1, user2, 25}))
-	c.pushblock(tx)
+	check(c.push([]TxDesc{
+		{From: user3, To: user2, Amount: 5},
+		{From: user1, To: user2, Amount: 25},
+	}))
 
 	s = buildChainStats(c.Iter())
 	eq(s.Bal(user1), 60)
@@ -251,32 +335,12 @@ func TestTransaction(t *testing.T) {
 	eq(s.Bal(user3), 5)
 	eq(s.Bal(user1)+s.Bal(user2)+s.Bal(user3), coinbaseValue)
 
-	// Build a transaction from scratch so
-	// we can add multiple inputs
-	tx = &Transaction{}
-	s = buildChainStats(c.Iter())
-	receivers := make([]receiver, 0)
-	for _, header := range []TxDesc{
+	c.push([]TxDesc{
 		{From: user1, To: user2, Amount: 5},
 		{From: user1, To: user3, Amount: 10},
-	} {
-		_, sp := s.spendableTxOutputs(header.From.PubKeyHash(), header.Amount)
-		for txid, outs := range sp {
-			txID, _ := hex.DecodeString(txid)
-			for _, ix := range outs {
-				tx.Inputs = append(tx.Inputs, &TxInput{TxID: txID, OutIndex: int32(ix), PubKey: header.From.PublicKey(), Signature: nil})
-			}
-		}
-		receivers = append(receivers, receiver{to: header.To, amount: header.Amount})
-	}
-	outputs, err := newOutputs(user1, s.Bal(user1), receivers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tx.Outputs = append(tx.Outputs, outputs...)
-	tx.ID = tx.hash()
-	check(tx.Sign(user1.PrivateKey(), c))
-	c.pushblock(tx)
+	})
+	check(c.prevtx[0].VerifySig(c))
+	check(c.blocks[len(c.blocks)-1].Transactions[0].VerifySig(c))
 
 	s = buildChainStats(c.Iter())
 	eq(s.Bal(user1), 45)
@@ -289,8 +353,22 @@ func TestTransaction(t *testing.T) {
 		{From: user2, To: user4, Amount: 40},
 		{From: user3, To: user4, Amount: 15},
 	}))
+	t.Log("TODO verify these new transactions")
+	// TODO uncomment this out when it does not break thigs
+	// for _, tx := range c.prevtx {
+	// 	check(tx.VerifySig(c))
+	// }
 	s = buildChainStats(c.Iter())
 	eq(s.Bal(user4), 100)
+	for i, u := range []*wallet.Wallet{
+		user1,
+		user2,
+		user3,
+	} {
+		if b := s.Bal(u); b != 0 {
+			t.Errorf(`Balance should be zero for user%d, got %v`, i+1, b)
+		}
+	}
 }
 
 func TestTxSign(t *testing.T) {
@@ -300,7 +378,6 @@ func TestTxSign(t *testing.T) {
 			t.Fatal(er)
 		}
 	}
-	// gen := mathrand.New(mathrand.NewSource(10))
 	gen := rand.Reader
 
 	k1, err := ecdsa.GenerateKey(elliptic.P256(), gen)
@@ -346,9 +423,97 @@ func TestTxSign(t *testing.T) {
 		},
 	}
 	tx.ID = tx.hash()
-	err = tx.Sign(u1.PrivateKey(), c)
-	e(err)
+	e(tx.Sign(u1.PrivateKey(), c))
 	e(tx.VerifySig(c))
+}
+
+func TestChainStats(t *testing.T) {
+	eq, check := helpers(t)
+	user1, user2, user3 := testWallet(t, 1), testWallet(t, 2), testWallet(t, 3)
+
+	c := newChain(user1)
+	s := buildChainStats(c.Iter())
+	eq(s.Bal(user1), coinbaseValue)
+	eq(s.Bal(user2), 0)
+	eq(s.Bal(user3), 0)
+	check(c.prevtx[0].VerifySig(c))
+
+	check(c.push([]TxDesc{{user1, user2, 10}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 90)
+	eq(s.Bal(user2), 10)
+	eq(s.Bal(user3), 0)
+	check(c.prevtx[0].VerifySig(c))
+
+	check(c.push([]TxDesc{{From: user1, To: user3, Amount: 50}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 40)
+	eq(s.Bal(user2), 10)
+	eq(s.Bal(user3), 50)
+	eq(uint64(len(s.Unspent(user3))), 1)
+	eq(s.Unspent(user3)[0].Amount, 50)
+	check(c.prevtx[0].VerifySig(c))
+
+	check(c.push([]TxDesc{{From: user2, To: user3, Amount: 5}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 40)
+	eq(s.Bal(user2), 5)
+	eq(s.Bal(user3), 55)
+	eq(uint64(len(s.Unspent(user3))), 2)
+	eq(s.Unspent(user3)[0].Amount, 5)
+	check(c.prevtx[0].VerifySig(c))
+
+	check(c.push([]TxDesc{{From: user1, To: user3, Amount: 5}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 35)
+	eq(s.Bal(user2), 5)
+	eq(s.Bal(user3), 60)
+	eq(uint64(len(s.Unspent(user3))), 3)
+	eq(s.Unspent(user3)[0].Amount, 5)
+	eq(s.Unspent(user3)[1].Amount, 5)
+	eq(s.Unspent(user3)[2].Amount, 50)
+	check(c.prevtx[0].VerifySig(c))
+
+	check(c.push([]TxDesc{{From: user3, To: user2, Amount: 7}}))
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 35)
+	eq(s.Bal(user2), 12)
+	eq(s.Bal(user3), 53)
+	check(c.txlist[len(c.txlist)-1].VerifySig(c))
+
+	desc := TxDesc{From: user3, To: user2, Amount: 60}
+	err := c.push([]TxDesc{desc})
+	if err == nil {
+		t.Error("expected error when trying to overspend")
+	}
+	eq(s.Bal(user1), 35)
+	eq(s.Bal(user2), 12)
+	eq(s.Bal(user3), 53)
+	check(c.txlist[len(c.txlist)-1].VerifySig(c))
+
+	tx, err := createTx(buildChainStats(c.Iter()), user3, []TxDesc{
+		{To: user2, Amount: 3},
+		{To: user1, Amount: 50},
+	})
+	check(err)
+	check(tx.Sign(user3.PrivateKey(), c))
+	c.append(New([]*Transaction{tx}, c.tophash()))
+
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 35+50)
+	eq(s.Bal(user2), 15)
+	eq(s.Bal(user3), 0)
+
+	tx = new(Transaction)
+	check(initTransaction(s, tx, TxDesc{From: user1, To: user3, Amount: 1}))
+	check(initTransaction(s, tx, TxDesc{From: user2, To: user3, Amount: 2}))
+	tx.ID = tx.hash()
+	c.append(New([]*Transaction{tx}, c.tophash()))
+
+	s = buildChainStats(c.Iter())
+	eq(s.Bal(user1), 84)
+	eq(s.Bal(user2), 13)
+	eq(s.Bal(user3), 3)
 }
 
 func eq(t *testing.T, a, b interface{}) {
@@ -398,6 +563,7 @@ func newChain(user key.Receiver) *chain {
 		b := Genisis(Coinbase(user))
 		c.append(b)
 	}
+	c.txlist = append(c.txlist, c.blocks[0].Transactions...)
 	return c
 }
 
@@ -406,12 +572,15 @@ type chain struct {
 	txs    map[string]*Transaction
 	blocks []*Block
 	i      int
+
+	txlist []*Transaction
+	prevtx []*Transaction
 }
 
 func (c *chain) addTx(to key.Receiver, from key.Sender, amount uint64) error {
 	tx, err := NewTransaction(
 		c, buildChainStats(c.Iter()),
-		&TxDesc{From: from, To: to, Amount: amount},
+		TxDesc{From: from, To: to, Amount: amount},
 	)
 	if err != nil {
 		return err
@@ -420,33 +589,103 @@ func (c *chain) addTx(to key.Receiver, from key.Sender, amount uint64) error {
 	return nil
 }
 
-type txReceiver struct {
-	to     key.Receiver
-	amount uint64
+func (c *chain) pushWithStats(stats *chainStats, heads []TxDesc) (err error) {
+	type txReceiver struct {
+		from key.Sender
+		recv []TxDesc
+	}
+	var (
+		n   = len(heads)
+		txs = make([]*Transaction, 0, n)
+		// stats = buildChainStats(c.Iter())
+		recv = make(map[[64]byte]*txReceiver)
+	)
+	// Create a map of senders to recveivers
+	// such that there is only one sender per
+	// new transaction.
+	for _, head := range heads {
+		k := privKeyBytes(head.From)
+		if _, ok := recv[k]; ok {
+			priv := privKeyBytes(recv[k].from)
+			if bytes.Compare(priv[:], k[:]) != 0 {
+				panic("keys don't match")
+			}
+			recv[k].recv = append(recv[k].recv, TxDesc{
+				To:     head.To,
+				Amount: head.Amount,
+			})
+		} else {
+			recv[k] = &txReceiver{
+				from: head.From,
+				recv: []TxDesc{{To: head.To, Amount: head.Amount}},
+			}
+		}
+	}
+
+	// Create one new transaction for every sender
+	for _, descs := range recv {
+		tx, err := createTx(stats, descs.from, descs.recv)
+		if err != nil {
+			return err
+		}
+		err = tx.Sign(descs.from.PrivateKey(), c)
+		if err != nil {
+			return err
+		}
+		txs = append(txs, tx)
+	}
+
+	blk := New(txs, c.tophash())
+	c.append(blk)
+	return
 }
 
 func (c *chain) push(heads []TxDesc) (err error) {
+	type txReceiver struct {
+		from key.Sender
+		recv []TxDesc
+	}
 	var (
-		e     error
-		i     = 0
-		recv  = make(map[string][]txReceiver)
 		n     = len(heads)
 		txs   = make([]*Transaction, 0, n)
 		stats = buildChainStats(c.Iter())
+		recv  = make(map[[64]byte]*txReceiver)
 	)
+	// Create a map of senders to recveivers
+	// such that there is only one sender per
+	// new transaction.
 	for _, head := range heads {
-		k := head.From.Address()
-		recv[k] = append(recv[k], txReceiver{head.To, head.Amount})
+		k := privKeyBytes(head.From)
+		if _, ok := recv[k]; ok {
+			priv := privKeyBytes(recv[k].from)
+			if bytes.Compare(priv[:], k[:]) != 0 {
+				panic("keys don't match")
+			}
+			recv[k].recv = append(recv[k].recv, TxDesc{
+				To:     head.To,
+				Amount: head.Amount,
+			})
+		} else {
+			recv[k] = &txReceiver{
+				from: head.From,
+				recv: []TxDesc{{To: head.To, Amount: head.Amount}},
+			}
+		}
 	}
 
-	txs = make([]*Transaction, n)
-	for i = 0; i < n; i++ {
-		txs[i], e = NewTransaction(c, stats, &heads[i])
-		if e != nil && err == nil {
-			err = e
+	// Create one new transaction for every sender
+	for _, descs := range recv {
+		tx, err := createTx(stats, descs.from, descs.recv)
+		if err != nil {
+			return err
 		}
-		c.txs[txs[i].StrID()] = txs[i]
+		err = tx.Sign(descs.from.PrivateKey(), c)
+		if err != nil {
+			return err
+		}
+		txs = append(txs, tx)
 	}
+
 	blk := New(txs, c.tophash())
 	c.append(blk)
 	return
@@ -472,8 +711,11 @@ func (c *chain) pushblock(txs ...*Transaction) {
 
 // Append will add a block to the ledger
 func (c *chain) append(blk *Block) {
+	c.prevtx = make([]*Transaction, 0)
 	for _, tx := range blk.Transactions {
 		c.txs[tx.StrID()] = tx
+		c.txlist = append(c.txlist, tx)
+		c.prevtx = append(c.prevtx, tx)
 	}
 	c.blocks = append(c.blocks, blk)
 }
@@ -490,11 +732,12 @@ func (c *chain) Transaction(id []byte) *Transaction {
 }
 
 // Push will add a block to the chain from just the data given.
-func (c *chain) Push(data string) {
-	bytedata := []byte(data)
-	prev := c.blocks[len(c.blocks)-1]
-	b := prev.CreateNext(bytedata)
-	c.append(b)
+func (c *chain) Push(*Block) error {
+	// bytedata := []byte(data)
+	// prev := c.blocks[len(c.blocks)-1]
+	// b := prev.CreateNext(bytedata)
+	// c.append(b)
+	return nil
 }
 
 func (c *chain) Iter() Iterator {
@@ -510,6 +753,14 @@ func (c *chain) Next() *Block {
 	c.i--
 	return block
 }
+
+var (
+	_ Iterator = (*chain)(nil)
+	_ Chain    = (*chain)(nil)
+	_ Store    = (*chain)(nil)
+	_ TxFinder = (*chain)(nil)
+	_ UTXOSet  = (*chainStats)(nil)
+)
 
 // TODO: find out how long it takes to
 // solve the concensus algorithm, tweak to get 10 mins
@@ -577,6 +828,16 @@ func TestRPC(t *testing.T) {
 
 type address string
 
-func (a address) Address() string {
-	return string(a)
+func (a address) Address() string    { return string(a) }
+func (a address) PubKeyHash() []byte { return key.ExtractPubKeyHash(string(a)) }
+
+func privKeyBytes(k key.Sender) [64]byte {
+	var (
+		key  [64]byte
+		priv = k.PrivateKey()
+	)
+
+	copy(key[:32], priv.X.Bytes())
+	copy(key[32:], priv.Y.Bytes())
+	return key
 }

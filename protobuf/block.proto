@@ -4,25 +4,44 @@ package block;
 
 option go_package = "github.com/harrybrwn/go-ledger/block;block";
 
+import "google/protobuf/timestamp.proto";
+
 message Block {
-    bytes Data  = 1;
-    repeated Transaction Transactions = 2;
-    int64 Nonce    = 3;
-    bytes Hash     = 4;
-    bytes PrevHash = 5;
+    bytes data     = 1;
+    int64 nonce    = 2;
+    bytes hash     = 3;
+    bytes prevHash = 4;
+    repeated Transaction transactions = 5;
 }
 
+// Trasaction is a blockchain transaction
+// which contains a list of both inputs and
+// outputs.
+//
+// Inputs are references to funds that have
+// been used by the owner on the input's
+// public key.
+//
+// Outputs are references to funds that are being
+// credited to the owner of the output's public
+// key hash.
 message Transaction {
     bytes ID = 1;
+
+    // Transaction lock timestamp
+    google.protobuf.Timestamp lock = 2;
+
     // list of transaction inputs
-    repeated TxInput Inputs = 2;
+    repeated TxInput inputs = 3;
+
     // list of transaction outputs
-    repeated TxOutput Outputs = 3;
+    repeated TxOutput outputs = 4;
 }
 
 message TxInput {
-    // TxID is the transaction id
-    bytes TxID = 1;
+    // TxID is the hash of transaction where
+    // the unspent output is stored.
+    bytes txID = 1;
     // OutIndex gives the index of the output refrenced
     // with respect to the transaction's list of
     // outputs (0 being the transaction's first output and so on...)
@@ -34,12 +53,19 @@ message TxInput {
     bytes pubKey = 4;
 }
 
+// TxOutput is a transaction output. If any
+// given output is not referenced by a transaction
+// input somewhere else in the chain, then the
+// amount field is credited to the address which
+// matches the public key hash.
 message TxOutput {
     // Amount holds the amount
     // of coins in the output
     uint64 amount = 1;
-    // Hash of the recipient's public
-    // key (see wallet package)
+
+    // Hash of the recipient's public key
+    // which can be derived from a wallet
+    // address (see wallet package).
     bytes pubKeyHash = 2;
 
     oneof payload {

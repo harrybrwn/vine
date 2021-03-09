@@ -1,0 +1,131 @@
+project_name: blk
+
+before:
+  hooks:
+    - go generate ./...
+
+builds:
+  - <<: &base_build
+      binary: blk
+      main: ./cmd/blk
+      env:
+        - CGO_ENABLED=0
+      ldflags:
+        - -s -w
+        - -X github.com/harrybrwn/go-ledger/cli.version={{ .Version }}
+        - -X github.com/harrybrwn/go-ledger/cli.commit={{ .Commit }}
+    id: linux
+    goos: [linux]
+    goarch:
+      - amd64
+      - 386
+      - arm64
+    #hooks:
+    #  post:
+    #    - upx {{ .Path }}
+  - <<: *base_build
+    id: macos
+    goos: [darwin]
+    goarch: [amd64]
+  - <<: *base_build
+    id: win
+    goos: [windows]
+    goarch: [386, amd64]
+
+archives:
+  - replacements: &reps
+      darwin: MacOS
+      linux: Linux
+      windows: Windows
+      "386": i386
+      amd64: x86_64
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - build/completion/*
+      - systemd/*
+      - README.md
+
+nfpms:
+  - <<: &descr
+      description: A blockchain
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    replacements: *reps
+    maintainer: Harry Brown <harrybrown98@gmail.com>
+    license:
+
+    dependencies: []
+    suggests: []
+
+    formats:
+      - deb
+      - rpm
+
+    bindir: /usr/local/bin
+    empty_folders: []
+    contents:
+      # Documentation
+      - src: README.md
+        dst: /usr/local/etc/blk/README.md
+
+      # Shell Completions
+      - src: build/completion/bash
+        dst: /usr/share/bash-completion/completions/blk
+      - src: build/completion/zsh
+        dst: /usr/share/zsh/vendor-completions/_blk
+
+      # systemd
+      - src: systemd/blk-ledger.service
+        dst: /usr/lib/systemd/system/blk-ledger.service
+        file_info:
+          mode: 0666 # anyone can read/write
+
+    #scripts:
+    #  postinstall: scripts/installation/postinstall.sh
+    #  preremove: scripts/installation/preremove.sh
+
+publishers:
+  - name: publisher
+    cmd: 'scp {{.ArtifactPath}} ssi-vm:~/ssi/{{.ArtifactName}}'
+
+brews:
+  - <<: *descr
+    name: go-ledger
+    skip_upload: true
+    tap:
+      owner: harrybrwn
+      name: homebrew-tap
+    homepage:
+    commit_author:
+      name: blk-releasebot
+      email: harrybrown98@gmail.com
+    folder: Formula
+    test: |
+      system "#{bin}/arpdb version"
+    install: |
+      bin.install "arpdb"
+
+snapcrafts:
+  - <<: *descr
+    name: blk
+    name_template: '{{ .ProjectName }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    summary: A blockchain
+    grade: stable
+    confinement: strict
+    publish: false
+
+release:
+  disable: true
+
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ .Tag }}-{{ .ShortCommit }}"
+changelog:
+  skip: true
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'

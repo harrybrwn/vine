@@ -3,20 +3,24 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/harrybrwn/config"
+	"github.com/harrybrwn/go-ledger/block"
+	"github.com/harrybrwn/go-ledger/blockstore"
+	"github.com/harrybrwn/go-ledger/key"
 	"github.com/harrybrwn/go-ledger/key/wallet"
 	"github.com/harrybrwn/go-ledger/node"
 	"github.com/harrybrwn/go-ledger/p2p"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/pkg/errors"
@@ -25,9 +29,108 @@ import (
 	"google.golang.org/grpc"
 )
 
+func newhost(ctx context.Context) (host.Host, error) {
+	w, err := openWallet(config.GetString("wallet"))
+	if err != nil {
+		return nil, err
+	}
+	return libp2p.New(ctx,
+		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+		libp2p.Identity(w),
+	)
+}
+
+func newnode(ctx context.Context) (*node.Node, host.Host, error) {
+	h, err := newhost(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	n, err := node.New(ctx, h)
+	if err != nil {
+		return nil, nil, err
+	}
+	return n, h, nil
+}
+
+func newNodeWithWallet(ctx context.Context, w *wallet.Wallet) (*node.Node, error) {
+	h, err := libp2p.New(ctx, libp2p.Identity(w), libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"))
+	if err != nil {
+		return nil, err
+	}
+	n, err := node.New(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
 func newSendCmd() *cobra.Command {
+	var (
+		to  string
+		fee uint64
+	)
 	c := &cobra.Command{
-		Use:           "send [messages...]",
+		Use:   "send <amount>",
+		Short: "Send tokens to an address",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if to == "" {
+				return errors.New("no address to send tokens to")
+			}
+			amount, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return err
+			}
+			w, err := openWallet(config.GetString("wallet"))
+			if err != nil {
+				return err
+			}
+			store, err := blockstore.Open(blocksDir())
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			h, err := libp2p.New(
+				ctx,
+				libp2p.Identity(w),
+				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+			)
+			if err != nil {
+				return err
+			}
+			n, err := node.FullNode(ctx, h, store)
+			if err != nil {
+				return err
+			}
+			if err = n.Start(); err != nil {
+				return err
+			}
+			time.Sleep(time.Millisecond * 250) // wait for discovery
+
+			tx, err := block.NewTransaction(
+				store,
+				block.BuildUTXOSet(store.Iter()), // rebuilds the utxo every time
+				block.TxDesc{
+					From:   w,
+					To:     key.NewReceiver(to),
+					Amount: uint64(amount) - fee,
+				},
+			)
+			log.Infof("sending tx %x", tx.ID)
+			if err != nil {
+				return err
+			}
+			return n.BroadcastTx(tx)
+		},
+	}
+	c.Flags().StringVar(&to, "to", to, "address of token recipient")
+	c.Flags().Uint64VarP(&fee, "fee", "f", fee, "add a fee to the transaction")
+	return c
+}
+
+func newSayCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:           "say [message...]",
 		Short:         "Send a message to the network.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -67,18 +170,11 @@ func newSendCmd() *cobra.Command {
 	return c
 }
 
-func newSyncCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "sync",
-		Short: "Sync with blockchains on the network.",
-	}
-	return c
-}
-
 func newPeersCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:           "peers",
 		Short:         "Get info on the peers connected",
+		Aliases:       []string{"p"},
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -90,24 +186,24 @@ func newPeersCmd() *cobra.Command {
 				log.WithError(err).Warnf("could not open wallet %s", walletname)
 				w = wallet.New()
 			}
-			priv := cryptoPrivKey(w.PrivateKey())
 
 			host, err := libp2p.New(
 				ctx,
-				libp2p.Identity(priv),
+				libp2p.Identity(w),
 				libp2p.NoListenAddrs,
 			)
 			if err != nil {
 				return errors.Wrap(err, "could not create host")
 			}
 
-			fmt.Println("me:", host.ID().Pretty())
+			cmd.Println("me:", host.ID().Pretty())
 			ch, err := p2p.DiscoverOnce(host.ID(), node.DiscoveryTag)
 			if err != nil {
 				return err
 			}
 			for pa := range ch {
-				fmt.Println(pa)
+				hostname, _ := maLookupAddr(pa.Addrs[0])
+				cmd.Printf("{%s: %v, %s}\n", pa.ID, pa.Addrs, hostname)
 			}
 			return nil
 		},
@@ -115,33 +211,17 @@ func newPeersCmd() *cobra.Command {
 	return c
 }
 
-func newTestCmd() *cobra.Command {
-	var hit string
+func newHitCmd() *cobra.Command {
+	var hit protocol.ID
 	var gprcReq bool
 	c := &cobra.Command{
-		Use:           "test",
+		Use:           "hit",
 		Short:         "Make calls to any node endpoint and return the first successful response",
-		Hidden:        true,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var (
-				walletname = config.GetString("wallet")
-				w          *wallet.Wallet
-				err        error
-			)
-			w, err = openWallet(walletname)
-			if err != nil {
-				log.WithError(err).Warn("could not open wallet")
-				w = wallet.New()
-			}
-			priv := cryptoPrivKey(w.PrivateKey())
-
 			ctx := context.Background()
-			host, err := libp2p.New(ctx,
-				libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
-				libp2p.Identity(priv),
-			)
+			host, err := newhost(ctx)
 			if err != nil {
 				return err
 			}
@@ -149,12 +229,8 @@ func newTestCmd() *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 			defer cancel()
-			ch, err := p2p.DiscoverOnce(host.ID(), node.DiscoveryTag)
-			if err != nil {
-				return err
-			}
 			if len(args) > 0 && hit == "" {
-				hit = args[0]
+				hit = protocol.ID(args[0])
 				args = args[1:]
 			}
 			if hit == "" {
@@ -167,55 +243,280 @@ func newTestCmd() *cobra.Command {
 				if err != nil {
 					panic(err)
 				}
-				client := node.NewGetBlockClient(conn)
-				blkMsg, err := client.Block(ctx, &node.BlockReq{Hash: []byte("no")})
+				client := node.NewBlockStoreClient(conn)
+				blkMsg, err := client.GetBlock(ctx, &node.BlockReq{Hash: []byte("no")})
 				if err != nil {
 					panic(err)
 				}
 				fmt.Println(blkMsg)
 			}
 
-			type errorResp struct {
-				Error string `json:"error"`
-			}
-			for pa := range ch {
-				if err := host.Connect(ctx, pa); err != nil {
-					log.Error("Could not connect:", err)
-					continue
-				}
-				s, err := host.NewStream(ctx, pa.ID, protocol.ID(hit))
-				if err != nil {
-					return errors.Wrap(err, "could not create stream")
-				}
-				buf := &bytes.Buffer{}
-				io.Copy(buf, s)
-				s.Close()
-				e := errorResp{}
-				json.Unmarshal(buf.Bytes(), &e)
-				if e.Error != "" {
-					continue
-				}
-				cancel()
-				fmt.Printf("%s\n", buf.String())
-				return nil
-			}
-			return fmt.Errorf("could not find '%s'", hit)
+			return hitNetwork(ctx, host, hit)
 		},
 	}
 	return c
 }
 
-func blocksDir() string {
-	return filepath.Join(
-		config.GetString("config"),
-		"blocks",
-	)
+func hitNetwork(ctx context.Context, host host.Host, proto protocol.ID) error {
+	type errorResp struct {
+		Error string `json:"error"`
+	}
+	ch, err := p2p.DiscoverOnce(host.ID(), node.DiscoveryTag)
+	if err != nil {
+		return err
+	}
+	for pa := range ch {
+		if err := host.Connect(ctx, pa); err != nil {
+			log.Error("Could not connect:", err)
+			continue
+		}
+		s, err := host.NewStream(ctx, pa.ID, proto)
+		if err != nil {
+			return errors.Wrap(err, "could not create stream")
+		}
+		buf := &bytes.Buffer{}
+		io.Copy(buf, s)
+		s.Close()
+		e := errorResp{}
+		json.Unmarshal(buf.Bytes(), &e)
+		if e.Error != "" {
+			continue
+		}
+		fmt.Printf("%s\n", buf.String())
+		return nil
+	}
+	return fmt.Errorf("could not find '%s'", proto)
 }
 
-func cryptoPrivKey(k *ecdsa.PrivateKey) crypto.PrivKey {
-	priv, _, err := crypto.ECDSAKeyPairFromKey(k)
+func newRPCCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "rpc",
+		Short: "Make rpc calls to the network",
+	}
+	c.AddCommand(
+		newRCPHeadCmd(),
+		newRPCBaseCmd(),
+		newRPCBlockCmd(),
+		newRPCTxCmd(),
+	)
+	return c
+}
+
+type hexbytes []byte
+
+func (hb hexbytes) MarshalJSON() ([]byte, error) {
+	return json.Marshal(hex.EncodeToString(hb))
+}
+
+// same as block.Block but with pretty json marshalling
+type displayBlock struct {
+	Data         []byte
+	Nonce        int64
+	Hash         hexbytes
+	PrevHash     hexbytes
+	Transactions []*block.Transaction
+}
+
+// assumes not running full node with discovery service
+func askFirstGRPCPeer(
+	ctx context.Context,
+	host host.Host,
+	fn func(peer.AddrInfo, node.BlockStoreClient) error,
+) (err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ch, err := p2p.DiscoverOnce(host.ID(), node.DiscoveryTag)
 	if err != nil {
 		return nil
 	}
-	return priv
+	for addr := range ch {
+		err := host.Connect(ctx, addr)
+		if err != nil {
+			continue
+		}
+		conn, err := grpc.DialContext(
+			ctx, addr.ID.Pretty(),
+			grpc.WithContextDialer(node.GRPCDialer(host, "/blk/grpc/0.1")),
+			grpc.WithInsecure(),
+		)
+		if err != nil {
+			continue
+		}
+		client := node.NewBlockStoreClient(conn)
+		if err = fn(addr, client); err == nil {
+			conn.Close()
+			return nil
+		}
+		conn.Close()
+	}
+	err = errors.New("no reponse from any peers")
+	return err
+}
+
+func newRCPHeadCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "head",
+		Short: "Get the head block",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			host, err := newhost(ctx)
+			if err != nil {
+				return err
+			}
+			return askFirstGRPCPeer(
+				ctx, host,
+				func(addr peer.AddrInfo, client node.BlockStoreClient) error {
+					blkmsg, err := client.Head(ctx, &node.Empty{})
+					if err != nil {
+						log.WithFields(log.Fields{
+							"peer":  addr.ID,
+							"error": err,
+						}).Trace("did not find block here")
+						return err
+					}
+					b, err := json.MarshalIndent(&blkmsg, "", "  ")
+					if err != nil {
+						return err
+					}
+					cmd.Printf("%s\n", b)
+					return nil
+				})
+		},
+	}
+	return c
+}
+
+func newRPCBaseCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "base",
+		Short: "Get the base of the chain",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			host, err := newhost(ctx)
+			if err != nil {
+				return err
+			}
+			return askFirstGRPCPeer(
+				ctx, host,
+				func(addr peer.AddrInfo, client node.BlockStoreClient) error {
+					blkmsg, err := client.Base(ctx, &node.Empty{})
+					if err != nil {
+						log.WithFields(log.Fields{
+							"peer":  addr.ID,
+							"error": err,
+						}).Trace("did not find genesis block here")
+						return err
+					}
+					b, err := json.MarshalIndent(&blkmsg, "", "  ")
+					if err != nil {
+						return err
+					}
+					cmd.Printf("%s\n", b)
+					return nil
+				},
+			)
+		},
+	}
+	return c
+}
+
+func grpcClient(ctx context.Context) (node.BlockStoreClient, error) {
+	host, err := newhost(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addr := getFirstPeer(host)
+	host.Connect(ctx, *addr)
+	conn, err := grpc.DialContext(
+		ctx, addr.ID.Pretty(),
+		grpc.WithContextDialer(node.GRPCDialer(host, "/blk/grpc/0.1")),
+		grpc.WithInsecure(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return node.NewBlockStoreClient(conn), nil
+}
+
+func newRPCBlockCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "block <hash>",
+		Short: "Get a block from the network",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			hash, err := tryDecode(args[0],
+				base64.RawStdEncoding.DecodeString,
+				base64.StdEncoding.DecodeString,
+				base64.RawURLEncoding.DecodeString,
+				hex.DecodeString,
+			)
+			if err != nil {
+				return err
+			}
+			host, err := newhost(ctx)
+			if err != nil {
+				return err
+			}
+			return askFirstGRPCPeer(ctx, host, func(addr peer.AddrInfo, client node.BlockStoreClient) error {
+				blkmsg, err := client.GetBlock(ctx, &node.BlockReq{Hash: hash})
+				if err != nil {
+					return err
+				}
+				b, err := json.MarshalIndent(blkmsg, "", "  ")
+				if err != nil {
+					return err
+				}
+				cmd.Printf("%s\n", b)
+				return nil
+			})
+		},
+	}
+	return c
+}
+
+func newRPCTxCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "tx <hash>",
+		Short: "Get a transaction from the network",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			hash, err := tryDecode(args[0],
+				base64.RawStdEncoding.DecodeString,
+				base64.StdEncoding.DecodeString,
+				base64.RawURLEncoding.DecodeString,
+				hex.DecodeString,
+			)
+			if err != nil {
+				return err
+			}
+			cmd.Printf("%x\n", hash)
+			return nil
+		},
+	}
+	return c
+}
+
+func newTestCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:    "test",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return nil
+		},
+	}
+	return c
+}
+
+func getFirstPeer(h host.Host) *peer.AddrInfo {
+	ch, err := p2p.DiscoverOnce(h.ID(), node.DiscoveryTag)
+	if err != nil {
+		return nil
+	}
+	for p := range ch {
+		if p.ID != h.ID() {
+			return &peer.AddrInfo{ID: p.ID, Addrs: p.Addrs}
+		}
+	}
+	return nil
 }

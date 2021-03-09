@@ -13,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/crypto"
 	crypto_pb "github.com/libp2p/go-libp2p-core/crypto/pb"
 	"github.com/mr-tron/base58"
+	"golang.org/x/crypto/ripemd160"
 )
 
 // Version1 is address version 1
@@ -21,10 +22,12 @@ const Version1 byte = 0x00
 // New creates a new wallet with the default version.
 func New() *Wallet {
 	pub, priv := key.GenPair()
+	privkey, _, _ := crypto.ECDSAKeyPairFromKey(priv)
 	return &Wallet{
 		pub:     pub,
 		priv:    priv,
 		version: Version1,
+		privkey: privkey,
 	}
 }
 
@@ -38,6 +41,20 @@ func Versioned(v byte) *Wallet {
 		priv:    priv,
 		version: v,
 		privkey: privkey,
+	}
+}
+
+// FromKey will create a wallet from an ecdsa private key
+func FromKey(priv *ecdsa.PrivateKey) *Wallet {
+	cryptoPriv, _, _ := crypto.ECDSAKeyPairFromKey(priv)
+	return &Wallet{
+		pub: bytes.Join([][]byte{
+			priv.PublicKey.X.Bytes(),
+			priv.PublicKey.Y.Bytes(),
+		}, nil),
+		priv:    priv,
+		privkey: cryptoPriv,
+		version: Version1,
 	}
 }
 
@@ -69,16 +86,11 @@ func (w *Wallet) PrivateKey() *ecdsa.PrivateKey {
 	return w.priv
 }
 
-func (w *Wallet) PrivKey() crypto.PrivKey {
-	return w.privkey
-}
-
 // Address will create a wallet address from the wallet's
 // public key.
 func (w *Wallet) Address() string {
-	// | v |        Private Key        |
-	// | v |      X      |      Y      |
 	// | v |        Public Key         |
+	// | v |      X      |      Y      |
 	// | v | ripemd160(sha256(pubkey)) |           checksum        |
 	// | v | public key hash  (pubkh)  | sha256(sha256(pubkh))[:4] |
 	// | 1 |            20             |             4             |
@@ -173,34 +185,53 @@ func checksum(b []byte) []byte {
 	return passtwo[:checksumLength]
 }
 
+func walletPubKeyHash(pubkey []byte) []byte {
+	pubhash := sha256.Sum256(pubkey)
+	ripemd := ripemd160.New()
+	ripemd.Write(pubhash[:])
+	return ripemd.Sum(nil)
+}
+
 var _ crypto.PrivKey = (*Wallet)(nil)
 
 // GetPublic gets the public key
 func (w *Wallet) GetPublic() crypto.PubKey {
-	return w.privkey.GetPublic()
+	return w.privKey().GetPublic()
+}
+
+// PrivKey will get the crypto.PrivKey for libp2p compatibility
+func (w *Wallet) privKey() crypto.PrivKey {
+	var err error
+	if w.privkey == nil {
+		w.privkey, _, err = crypto.ECDSAKeyPairFromKey(w.priv)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return w.privkey
 }
 
 // Type returns the type of key that the wallet has
 func (w *Wallet) Type() crypto_pb.KeyType {
-	return w.privkey.Type()
+	return w.privKey().Type()
 }
 
 // Sign will sign a byte array with the private key
 func (w *Wallet) Sign(b []byte) ([]byte, error) {
-	return w.privkey.Sign(b)
+	return w.privKey().Sign(b)
 }
 
 // Raw gets the raw data
 func (w *Wallet) Raw() ([]byte, error) {
-	return w.privkey.Bytes()
+	return w.privKey().Raw()
 }
 
 // Equals returns true if the key pass is the same key
 func (w *Wallet) Equals(k crypto.Key) bool {
-	return w.privkey.Equals(k)
+	return w.privKey().Equals(k)
 }
 
 // Bytes get gets the raw bytes of the key
 func (w *Wallet) Bytes() ([]byte, error) {
-	return w.privkey.Bytes()
+	return w.privKey().Bytes()
 }
