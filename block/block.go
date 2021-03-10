@@ -37,12 +37,16 @@ type Store interface {
 }
 
 // Iterator is an interface that defines a block iterator
-// api.
 type Iterator interface {
 	// returns the next block in the chain, value will
 	// be nil if there are no more blocks. This should
 	// return the genisis block as the last block
 	Next() *Block
+}
+
+type iter interface {
+	Next() bool
+	Block() *Block
 }
 
 // TxFinder defines an interface for

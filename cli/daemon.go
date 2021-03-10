@@ -80,9 +80,7 @@ func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 					"pid_file": pidFile,
 				}).Info("Starting background daemon")
 			}
-			hooks := []daemonHook{
-				events,
-			}
+			hooks := []daemonHook{events}
 			if flags.Silent {
 				hooks = append(hooks, cliHook)
 			}
@@ -96,6 +94,118 @@ func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 }
 
 type daemonHook func(context.Context, host.Host, func())
+
+func runDaemon(hooks ...daemonHook) error {
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	var (
+		walletname = config.GetString("wallet")
+		w          *wallet.Wallet
+		err        error
+	)
+	w, err = openWallet(walletname)
+	if err != nil {
+		return err
+	}
+
+	host, err := libp2p.New(ctx,
+		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+		libp2p.Identity(w),
+	)
+	if err != nil {
+		return err
+	}
+	defer host.Close()
+
+	// for testing
+	host.SetStreamHandler("/msg", func(s network.Stream) {
+		buf := new(bytes.Buffer)
+		io.Copy(buf, s)
+		log.Info(buf.String())
+	})
+
+	pid := os.Getpid()
+	log.WithFields(log.Fields{
+		"pid": pid, "node": host.ID().Pretty(),
+	}).Infof("Starting full node")
+
+	store, err := blockstore.Open(blocksDir())
+	if err != nil {
+		return err
+	}
+	fullnode, err := node.FullNode(ctx, host, store)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err = fullnode.Close(); err != nil {
+			log.WithError(err).Warning("failed to close node")
+		}
+		if err = store.Close(); err != nil {
+			log.WithError(err).Error("could not close block store")
+		} else {
+			time.Sleep(time.Second / 2) // hey man, this makes it look cool ok, don't judge
+			log.Info("Graceful shutdown successful.")
+		}
+	}()
+
+	srv := grpc.NewServer()
+	node.RegisterBlockStoreServer(srv, fullnode)
+	err = fullnode.StartWithGRPC(srv, node.GRPCProto)
+	if err == context.Canceled {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	for _, h := range hooks {
+		go h(ctx, host, stop)
+	}
+
+	var (
+		termSigs  = make(chan os.Signal)
+		killSigs  = make(chan os.Signal)
+		intSigs   = make(chan os.Signal)
+		reloadSig = make(chan os.Signal)
+	)
+	signal.Notify(termSigs, syscall.SIGTERM)
+	signal.Notify(killSigs, os.Kill)
+	signal.Notify(intSigs, os.Interrupt)
+	signal.Notify(reloadSig, syscall.SIGHUP)
+	defer func() {
+		close(termSigs)
+		close(killSigs)
+		close(intSigs)
+		close(reloadSig)
+	}()
+
+	go func() {
+		for sig := range reloadSig {
+			log.Info("reloading config: ", sig)
+			err := config.ReadConfig()
+			if err != nil {
+				log.Error("config reload", err)
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-termSigs:
+		fmt.Print("\r") // hide the '^C'
+		log.Info("Daemon was terminated")
+		return &StatusError{Msg: "terminated", Code: 1}
+	case <-killSigs:
+		log.Info("Daemon was killed")
+		return &StatusError{Msg: "killed", Code: 1}
+	case <-intSigs:
+		fmt.Print("\r") // hide the '^C'
+		log.Info("Interupt received, shutting down...")
+		return nil
+	}
+}
 
 func cliHook(ctx context.Context, host host.Host, cancel func()) {
 	peers := host.Peerstore()
@@ -213,117 +323,5 @@ func events(ctx context.Context, host host.Host, cancel func()) {
 			log.Trace("closing event handler")
 			return
 		}
-	}
-}
-
-func runDaemon(hooks ...daemonHook) error {
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-	var (
-		walletname = config.GetString("wallet")
-		w          *wallet.Wallet
-		err        error
-	)
-	w, err = openWallet(walletname)
-	if err != nil {
-		return err
-	}
-
-	host, err := libp2p.New(ctx,
-		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
-		libp2p.Identity(w),
-	)
-	if err != nil {
-		return err
-	}
-	defer host.Close()
-
-	// for testing
-	host.SetStreamHandler("/msg", func(s network.Stream) {
-		buf := new(bytes.Buffer)
-		io.Copy(buf, s)
-		log.Info(buf.String())
-	})
-
-	pid := os.Getpid()
-	log.WithFields(log.Fields{
-		"pid": pid, "node": host.ID().Pretty(),
-	}).Infof("Starting full node")
-
-	store, err := blockstore.Open(blocksDir())
-	if err != nil {
-		return err
-	}
-	fullnode, err := node.FullNode(ctx, host, store)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if err = fullnode.Close(); err != nil {
-			log.WithError(err).Warning("failed to close node")
-		}
-		if err = store.Close(); err != nil {
-			log.WithError(err).Error("could not close block store")
-		} else {
-			time.Sleep(time.Second / 2) // hey man, this makes it look cool ok, don't judge
-			log.Info("Graceful shutdown successful.")
-		}
-	}()
-
-	srv := grpc.NewServer()
-	node.RegisterBlockStoreServer(srv, fullnode)
-	err = fullnode.StartWithGRPC(srv, node.GRPCProto)
-	if err == context.Canceled {
-		return nil
-	} else if err != nil {
-		return err
-	}
-
-	for _, h := range hooks {
-		go h(ctx, host, stop)
-	}
-
-	var (
-		termSigs  = make(chan os.Signal)
-		killSigs  = make(chan os.Signal)
-		intSigs   = make(chan os.Signal)
-		reloadSig = make(chan os.Signal)
-	)
-	signal.Notify(termSigs, syscall.SIGTERM)
-	signal.Notify(killSigs, os.Kill)
-	signal.Notify(intSigs, os.Interrupt)
-	signal.Notify(reloadSig, syscall.SIGHUP)
-	defer func() {
-		close(termSigs)
-		close(killSigs)
-		close(intSigs)
-		close(reloadSig)
-	}()
-
-	go func() {
-		for sig := range reloadSig {
-			log.Info("reloading config: ", sig)
-			err := config.ReadConfig()
-			if err != nil {
-				log.Error("config reload", err)
-			}
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-termSigs:
-		fmt.Print("\r") // hide the '^C'
-		log.Info("Daemon was terminated")
-		return &StatusError{Msg: "terminated", Code: 1}
-	case <-killSigs:
-		log.Info("Daemon was killed")
-		return &StatusError{Msg: "killed", Code: 1}
-	case <-intSigs:
-		fmt.Print("\r") // hide the '^C'
-		log.Info("Interupt received, shutting down...")
-		return nil
 	}
 }

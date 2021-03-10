@@ -39,7 +39,7 @@ type chainStats struct {
 	// mapping of user addresses to user balances
 	balances map[string]uint64
 	// maps transaction IDs to spent output indexes
-	spent map[string][]int32
+	spent map[string][]int
 	// maps user pub-key-hashes to unspent outputs
 	utxo map[string][]*UTXO
 }
@@ -56,7 +56,7 @@ func (sts *chainStats) Update(tx *Transaction) error {
 	for outIx, out := range tx.Outputs {
 		// check if the current transaction output index
 		// has been stored in the spent tx outputs
-		if sts.txOutputIsSpent(txid, int32(outIx)) {
+		if sts.txOutputIsSpent(txid, outIx) {
 			continue
 		}
 
@@ -81,7 +81,7 @@ func (sts *chainStats) Update(tx *Transaction) error {
 	// https://en.bitcoin.it/wiki/Transaction#Generation
 	if !tx.IsCoinbase() {
 		for _, in := range tx.Inputs {
-			sts.markSpent(in.TxID, in.OutIndex)
+			sts.markSpent(in.TxID, int(in.OutIndex), in.PubKey)
 		}
 	}
 	return nil
@@ -91,7 +91,7 @@ func buildChainStats(it Iterator) *chainStats {
 	var (
 		block *Block
 		s     = &chainStats{
-			spent:    make(map[string][]int32),
+			spent:    make(map[string][]int),
 			balances: make(map[string]uint64),
 			utxo:     make(map[string][]*UTXO),
 		}
@@ -124,14 +124,38 @@ func (sts *chainStats) Unspent(k key.Address) []*UTXO {
 	return utxos
 }
 
-func (sts *chainStats) markSpent(txid []byte, index int32) {
+func (sts *chainStats) markSpent(txid []byte, index int, pubkey []byte) {
 	id := hex.EncodeToString(txid)
 	sts.spent[id] = append(sts.spent[id], index)
+	userkey := hex.EncodeToString(key.PubKey(pubkey).Hash())
+
+	unspent, ok := sts.utxo[userkey]
+	if !ok {
+		return
+	}
+
+	// update the utxo set by checking if the output being marked as
+	// spent is in it and removing it then updating the balance set
+	for i, utxo := range sts.utxo[userkey] {
+		if utxo.index == int(index) && bytes.Compare(utxo.txid, txid) == 0 {
+			// update balance and remove from list of UTXOs
+			sts.balances[userkey] -= utxo.Amount
+			unspent = remove(unspent, i)
+		}
+	}
+	// reset the UTXOs
+	sts.utxo[userkey] = unspent
+}
+
+func remove(s []*UTXO, index int) []*UTXO {
+	l := len(s) - 1
+	s[index] = s[l] // swap
+	return s[:l]    // exclude
 }
 
 func (sts *chainStats) txOutputIsSpent(
 	txid string,
-	index int32,
+	index int,
 ) bool {
 	if spentouts, ok := sts.spent[txid]; ok {
 		for _, ix := range spentouts {
@@ -197,7 +221,7 @@ Outer:
 		for _, spent := range spentouts {
 			if utxoEq(spent, o) {
 				txid := hex.EncodeToString(spent.txid)
-				sts.spent[txid] = append(sts.spent[txid], int32(spent.index))
+				sts.spent[txid] = append(sts.spent[txid], spent.index)
 				continue Outer
 			}
 		}

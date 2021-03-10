@@ -155,7 +155,7 @@ risk, as of 2020 there is a high risk of being overpowered by a
 }
 
 var (
-	version string
+	version = "dev"
 	built   string
 	commit  string
 	hash    string
@@ -168,6 +168,10 @@ func newVersionCmd() *cobra.Command {
 		Aliases: []string{"v"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := cmd.Root()
+			if version == "dev" {
+				cmd.Printf("%s development version\n", root.Name())
+				return nil
+			}
 			cmd.Printf("%s version %s\n", root.Name(), version)
 			cmd.Printf("built:  %s\n", built)
 			cmd.Printf("commit: %s\n", commit)

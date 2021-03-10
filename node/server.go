@@ -9,10 +9,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type rpcHandler struct {
-	UnimplementedBlockStoreServer
-}
-
 // Head implement the Head service for the BlockStoreServer grpc service.
 func (n *Node) Head(ctx context.Context, e *Empty) (*BlockMsg, error) {
 	log.Info("rpc Head")
