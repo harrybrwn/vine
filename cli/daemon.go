@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-vine/blockstore"
-	"github.com/harrybrwn/go-vine/key/wallet"
-	"github.com/harrybrwn/go-vine/node"
+	"github.com/harrybrwn/vine/blockstore"
+	"github.com/harrybrwn/vine/key/wallet"
+	"github.com/harrybrwn/vine/node"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
@@ -32,7 +32,7 @@ import (
 func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 	var (
 		init    bool
-		detatch bool
+		detach bool
 		kill    bool
 	)
 	c := &cobra.Command{
@@ -56,7 +56,7 @@ func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 				p := &os.Process{Pid: pid}
 				return p.Signal(os.Interrupt)
 			}
-			if detatch {
+			if detach {
 				ctx := &daemon.Context{
 					PidFileName: pidFile,
 					PidFilePerm: 0644,
@@ -88,8 +88,8 @@ func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&init, "init", init, "initialize with default settings")
-	c.Flags().BoolVarP(&detatch, "detach", "d", detatch, "detatch the daemon")
-	c.Flags().BoolVarP(&kill, "kill", "k", kill, "kill a detatched daemon if one exists")
+	c.Flags().BoolVarP(&detach, "detach", "d", detach, "detach the daemon")
+	c.Flags().BoolVarP(&kill, "kill", "k", kill, "kill a detached daemon if one exists")
 	return c
 }
 
@@ -165,17 +165,14 @@ func runDaemon(hooks ...daemonHook) error {
 
 	var (
 		termSigs  = make(chan os.Signal)
-		killSigs  = make(chan os.Signal)
 		intSigs   = make(chan os.Signal)
 		reloadSig = make(chan os.Signal)
 	)
 	signal.Notify(termSigs, syscall.SIGTERM)
-	signal.Notify(killSigs, os.Kill)
 	signal.Notify(intSigs, os.Interrupt)
 	signal.Notify(reloadSig, syscall.SIGHUP)
 	defer func() {
 		close(termSigs)
-		close(killSigs)
 		close(intSigs)
 		close(reloadSig)
 	}()
@@ -197,9 +194,6 @@ func runDaemon(hooks ...daemonHook) error {
 		fmt.Print("\r") // hide the '^C'
 		log.Info("Daemon was terminated")
 		return &StatusError{Msg: "terminated", Code: 1}
-	case <-killSigs:
-		log.Info("Daemon was killed")
-		return &StatusError{Msg: "killed", Code: 1}
 	case <-intSigs:
 		fmt.Print("\r") // hide the '^C'
 		log.Info("Interupt received, shutting down...")

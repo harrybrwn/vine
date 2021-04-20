@@ -6,9 +6,9 @@ import (
 
 	badger "github.com/dgraph-io/badger/v2"
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-vine/block"
-	"github.com/harrybrwn/go-vine/internal/logging"
-	"github.com/harrybrwn/go-vine/key"
+	"github.com/harrybrwn/vine/block"
+	"github.com/harrybrwn/vine/internal/logging"
+	"github.com/harrybrwn/vine/key"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -283,3 +283,8 @@ func withBlockPrefix(key []byte) []byte {
 func withTxPrefix(key []byte) []byte {
 	return bytes.Join([][]byte{txPrefix, key}, nil)
 }
+
+var (
+	_ block.Chain    = (*BlockStore)(nil)
+	_ block.TxFinder = (*BlockStore)(nil)
+)

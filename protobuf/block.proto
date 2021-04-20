@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package block;
 
-option go_package = "github.com/harrybrwn/go-ledger/block;block";
+option go_package = "github.com/harrybrwn/vine/block;block";
 
 import "google/protobuf/timestamp.proto";
 

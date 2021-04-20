@@ -12,8 +12,8 @@ builds:
         - CGO_ENABLED=0
       ldflags:
         - -s -w
-        - -X github.com/harrybrwn/go-vine/cli.version={{ .Version }}
-        - -X github.com/harrybrwn/go-vine/cli.commit={{ .Commit }}
+        - -X github.com/harrybrwn/vine/cli.version={{ .Version }}
+        - -X github.com/harrybrwn/vine/cli.commit={{ .Commit }}
     id: linux
     goos: [linux]
     goarch:
@@ -91,7 +91,7 @@ publishers:
 
 brews:
   - <<: *descr
-    name: go-vine
+    name: vine
     skip_upload: true
     tap:
       owner: harrybrwn

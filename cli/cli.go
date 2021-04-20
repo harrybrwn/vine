@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-vine/internal"
-	"github.com/harrybrwn/go-vine/internal/logging"
-	"github.com/harrybrwn/go-vine/key/wallet"
+	"github.com/harrybrwn/vine/internal"
+	"github.com/harrybrwn/vine/internal/logging"
+	"github.com/harrybrwn/vine/key/wallet"
 	"github.com/harrybrwn/mdns"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/pkg/errors"
@@ -62,7 +62,7 @@ func New() *cobra.Command {
 	if conf.Config != "" {
 		config.AddPath(conf.Config)
 	}
-	config.AddConfigDir("vine")
+	config.AddUserConfigDir("vine")
 	config.InitDefaults()
 
 	dir := config.DirUsed()
@@ -133,7 +133,7 @@ risk, as of 2020 there is a high risk of being overpowered by a
 		return allLogLevels, cobra.ShellCompDirectiveNoSpace
 	})
 
-	c.SetHelpTemplate(commandTemplate)
+	c.SetHelpTemplate(config.IndentedCobraHelpTemplate)
 	c.AddCommand(
 		newConfigCmd(),
 		newVersionCmd(),
@@ -422,32 +422,3 @@ func indent(s string) string {
 	}
 	return strings.Join(parts, "\n")
 }
-
-var commandTemplate = `Usage:
-{{ if (or .Runnable .HasAvailableSubCommands) }}
-	{{.UseLine}}{{end}}{{if gt (len .Aliases) 0}}
-
-Aliases:
-	{{.NameAndAliases}}{{end}}{{if .HasExample}}
-
-Examples:
-	{{.Example}}{{end}}{{if .HasAvailableSubCommands}}
-
-Available Commands:
-{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
-	{{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
-
-Flags:
-
-{{.LocalFlags.FlagUsages | trimTrailingWhitespaces | indent}}{{end}}{{if .HasAvailableInheritedFlags}}
-
-Global Flags:
-
-{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces | indent}}{{end}}{{if .HasHelpSubCommands}}
-
-Additional help topics:
-{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-	{{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
-
-Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
-`

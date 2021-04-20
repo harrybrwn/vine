@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/harrybrwn/go-vine/block"
-	"github.com/harrybrwn/go-vine/key"
-	"github.com/harrybrwn/go-vine/key/wallet"
+	"github.com/harrybrwn/vine/block"
+	"github.com/harrybrwn/vine/key"
+	"github.com/harrybrwn/vine/key/wallet"
 	"github.com/sirupsen/logrus"
 )
 
@@ -123,7 +123,7 @@ func BenchmarkBasicIter(b *testing.B) {
 	os.RemoveAll(dir)
 }
 
-func BenchmarkIterWithChanner(b *testing.B) {
+func BenchmarkIterWithChannel(b *testing.B) {
 	store, dir, err := testingStore(benchmarkBlocks)
 	if err != nil {
 		store.Close()

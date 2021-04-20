@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-vine/key/wallet"
+	"github.com/harrybrwn/vine/key/wallet"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr-net"

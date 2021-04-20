@@ -9,7 +9,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/harrybrwn/go-vine/key"
+	"github.com/harrybrwn/vine/key"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	crypto_pb "github.com/libp2p/go-libp2p-core/crypto/pb"
 	"github.com/mr-tron/base58"

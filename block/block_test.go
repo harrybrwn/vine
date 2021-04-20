@@ -10,14 +10,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	mathrand "math/rand"
+	"os"
 	"reflect"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-vine/key"
-	"github.com/harrybrwn/go-vine/key/wallet"
+	"github.com/golang/protobuf/ptypes"
+	"github.com/harrybrwn/vine/key"
+	"github.com/harrybrwn/vine/key/wallet"
 )
 
 func init() {
@@ -56,6 +59,7 @@ type testChain struct {
 
 func Test(t *testing.T) {
 	t.Skip()
+
 	difficulty = 30
 	b := &Block{
 		Data:         []byte("Genesis block"),
@@ -66,7 +70,7 @@ func Test(t *testing.T) {
 	fmt.Printf("nonce:      %d\n", b.Nonce)
 	fmt.Printf("hash:       %#v\n", b.Hash)
 	gen := DefaultGenesis()
-	fmt.Println("reproducable:", bytes.Compare(b.Hash, gen.Hash) == 0 && b.Nonce == gen.Nonce)
+	fmt.Println("reproducible:", bytes.Compare(b.Hash, gen.Hash) == 0 && b.Nonce == gen.Nonce)
 	fmt.Println("is default genesis block:", IsDefaultGenesis(b))
 
 	user := users(5)
@@ -272,7 +276,7 @@ func TestBasicTransations(t *testing.T) {
 	if s.Bal(user3) != 60-7 {
 		t.Errorf(`
             Chain stats did not find the correct
-            balance when user spents from multiple UTXOs.
+            balance when user spends from multiple UTXOs.
             want: %d, got %d`, 60-15, s.Bal(user3),
 		)
 	}
@@ -340,7 +344,7 @@ func TestTransaction(t *testing.T) {
 		{From: user3, To: user4, Amount: 15},
 	}))
 	t.Log("TODO verify these new transactions")
-	// TODO uncomment this out when it does not break thigs
+	// TODO uncomment this out when it does not break things
 	// for _, tx := range c.prevtx {
 	// 	check(tx.VerifySig(c))
 	// }
@@ -562,7 +566,7 @@ func TestLarge(t *testing.T) {
 		{Amount: s.Bal(users[4]), From: users[4], To: users[5]},
 	}))
 	eq(s.Bal(users[5]), 28)
-	dbg.printChain(c.Iter())
+	// dbg.printChain(c.Iter())
 }
 
 func eq(t *testing.T, a, b interface{}) {
@@ -652,7 +656,7 @@ func (c *chain) pushWithStats(stats *chainStats, heads []TxDesc) (err error) {
 		return errors.New("no transaction can be created with no TxDesc")
 	}
 
-	// Create a map of senders to recveivers
+	// Create a map of senders to receivers
 	// such that there is only one sender per
 	// new transaction.
 	for _, head := range heads {
@@ -793,36 +797,43 @@ func newChainDebugger(c *chain, users []key.Sender) chaindebugger {
 }
 
 func (dbg chaindebugger) printChain(it Iterator) {
+	var w io.Writer = os.Stdout
 	for {
 		blk := it.Next()
 		if blk == nil {
 			break
 		}
 
-		fmt.Printf("Block(%.10x...)\n", blk.Hash)
+		fmt.Fprintf(w, "Block(%.10x...)\n", blk.Hash)
 		for _, tx := range blk.Transactions {
-			fmt.Printf("  TX(%.10x)\n", tx.ID)
+			fmt.Fprintf(w, "  TX(%.10x)\n", tx.ID)
+			fmt.Fprintf(w, "    lock: %v,\n", ptypes.TimestampString(tx.Lock))
 			const trunc = 10
 			for _, in := range tx.Inputs {
-				fmt.Printf("    In(")
-				fmt.Printf("user: %s, ", dbg.name(key.PubKey(in.PubKey).Hash()))
-				fmt.Printf("tx: %.10x, ", in.TxID)
-				fmt.Printf("index: %-d, ", in.OutIndex)
-				fmt.Printf("pubkey: %.10x, ", in.PubKey)
-				fmt.Printf("pubhash: %.5x, ", key.PubKey(in.PubKey).Hash())
-				fmt.Printf("sig: %.10x, ", in.Signature)
-				fmt.Printf("\b\b)\n")
+				fmt.Fprintf(w, "    In(")
+				var hash []byte = nil
+				if in.PubKey != nil {
+					hash = key.PubKey(in.PubKey).Hash()
+				}
+				fmt.Fprintf(w, "user:  %s, ", dbg.name(hash))
+				fmt.Fprintf(w, "index: %-d, ", in.OutIndex)
+				fmt.Fprintf(w, "tx: %.10x, ", in.TxID)
+				fmt.Fprintf(w, "pubhash: %.10x, ", key.PubKey(in.PubKey).Hash())
+				fmt.Fprintf(w, "pubkey: %.10x, ", in.PubKey)
+				fmt.Fprintf(w, "sig: %.10x, ", in.Signature)
+				fmt.Fprintf(w, "\b\b)\n")
 			}
 
-			for _, out := range tx.Outputs {
-				fmt.Printf("    Out(")
-				fmt.Printf("amount: %d, ", out.Amount)
-				fmt.Printf("user: %s, ", dbg.name(out.PubKeyHash))
-				fmt.Printf("pubhash: %.10x, ", out.PubKeyHash)
-				fmt.Printf("\b\b)\n")
+			for i, out := range tx.Outputs {
+				fmt.Fprintf(w, "    Out(")
+				fmt.Fprintf(w, "user: %s, ", dbg.name(out.PubKeyHash))
+				fmt.Fprintf(w, "index: %-d, ", i)
+				fmt.Fprintf(w, "amount: %d, ", out.Amount)
+				fmt.Fprintf(w, "pubhash: %.10x, ", out.PubKeyHash)
+				fmt.Fprintf(w, "\b\b)\n")
 			}
 		}
-
+		fmt.Fprintf(w, "\n")
 		if IsGenisis(blk) {
 			break
 		}
@@ -834,6 +845,9 @@ func (dbg chaindebugger) inputStr(in *TxInput) string {
 }
 
 func (dbg chaindebugger) name(pubkeyhash []byte) string {
+	if pubkeyhash == nil {
+		return "<none>"
+	}
 	return dbg[hex.EncodeToString(pubkeyhash)].name
 }
 

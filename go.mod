@@ -1,4 +1,4 @@
-module github.com/harrybrwn/go-vine
+module github.com/harrybrwn/vine
 
 go 1.16
 
@@ -13,7 +13,6 @@ require (
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0 // indirect
 	github.com/libp2p/go-libp2p v0.13.0
 	github.com/libp2p/go-libp2p-core v0.8.5
-	github.com/libp2p/go-libp2p-pubsub v0.4.1 // indirect
 	github.com/mattn/go-runewidth v0.0.10 // indirect
 	github.com/miekg/dns v1.1.31
 	github.com/mr-tron/base58 v1.2.0

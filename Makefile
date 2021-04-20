@@ -1,20 +1,20 @@
 GOFILES=$(shell find . -name '*.go' -type f | sort)
 VERSION=$(shell git describe --tags --abbrev=0)-$(shell git rev-parse --short HEAD)
 COMMIT=$(shell git rev-parse HEAD)
-#HASH=$(shell sha256sum <(find . -name '*.go' -type f | sort))
 HASH=$(shell cat $(GOFILES) go.mod go.sum | sha256sum | sed -Ee 's/\s|-//g')
 
 DATE=$(shell date -R)
-GOFLAGS=-ldflags "-w -s \
-		-X 'github.com/harrybrwn/go-vine/cli.version=$(VERSION)' \
-		-X 'github.com/harrybrwn/go-vine/cli.built=$(DATE)' \
-		-X 'github.com/harrybrwn/go-vine/cli.commit=$(COMMIT)' \
-		-X 'github.com/harrybrwn/go-vine/cli.hash=$(HASH)'"
+GOFLAGS=-trimpath       \
+		-ldflags "-w -s \
+			-X 'github.com/harrybrwn/vine/cli.version=$(VERSION)' \
+			-X 'github.com/harrybrwn/vine/cli.built=$(DATE)'      \
+			-X 'github.com/harrybrwn/vine/cli.commit=$(COMMIT)'   \
+			-X 'github.com/harrybrwn/vine/cli.hash=$(HASH)'"
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
 #BINDIR=/usr/local/bin
-BINDIR=$$HOME/dev/go/bin
+BINDIR=$$GOPATH/bin
 
 GEN=block/block.pb.go node/node.pb.go
 
@@ -34,12 +34,16 @@ systemd:
 	systemctl --user enable --now blk-ledger
 
 gen: $(GEN)
+	go generate ./block ./node
 
-%.pb.go:
-	go generate ./...
+node/%.pb.go:
+	go generate ./node
+
+block/%.pb.go:
+	go generate ./block
 
 clean:
-	$(RM) -r build dist ./vine ./blk ./blkmine blk-arm blk-darwin
+	$(RM) -r ./build ./dist ./vine ./vine.exe
 	go clean -i ./cmd/vine
 
 cleanpb:

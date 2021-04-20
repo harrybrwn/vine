@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-vine/block"
-	"github.com/harrybrwn/go-vine/p2p"
+	"github.com/harrybrwn/vine/block"
+	"github.com/harrybrwn/vine/p2p"
 	"github.com/libp2p/go-libp2p-core/event"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
@@ -277,7 +277,7 @@ func (n *Node) BroadcastTx(tx *block.Transaction) error {
 		client := NewBlockStoreClient(conn)
 		status, err := client.Tx(n.ctx, &TxMsg{Sender: n.host.ID().Pretty(), Tx: tx})
 		if err != nil {
-			log.WithError(err).Error("could not send transaciton")
+			log.WithError(err).Error("could not send transaction")
 			continue
 		}
 		log.WithFields(log.Fields{
@@ -291,7 +291,7 @@ func (n *Node) BroadcastTx(tx *block.Transaction) error {
 
 func (n *Node) discover() {
 	net := n.host.Network()
-	emiter, err := n.host.EventBus().Emitter(&event.EvtPeerConnectednessChanged{})
+	emitter, err := n.host.EventBus().Emitter(&event.EvtPeerConnectednessChanged{})
 	if err != nil {
 		log.WithError(err).Error("could not create connectedness event, shutting down discovery")
 		return
@@ -310,7 +310,7 @@ func (n *Node) discover() {
 				"could not connect to %s", addr.ID.Pretty())
 			continue
 		}
-		err = emiter.Emit(event.EvtPeerConnectednessChanged{
+		err = emitter.Emit(event.EvtPeerConnectednessChanged{
 			Peer:          addr.ID,
 			Connectedness: network.Connected,
 		})

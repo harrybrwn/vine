@@ -6,7 +6,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/harrybrwn/go-vine/key"
+	"github.com/harrybrwn/vine/key"
 )
 
 // UTXOSet holds unspent transaction outputs.
@@ -14,8 +14,6 @@ type UTXOSet interface {
 	Bal(key.Address) uint64
 	Unspent(key.Address) []*UTXO
 	Update(*Transaction) error
-	// TODO add a 'Spent' function that will
-	// mark spent transaction outputs as spent
 }
 
 // BuildUTXOSet will traverse the entire chain to
@@ -26,11 +24,15 @@ func BuildUTXOSet(i Iterator) UTXOSet {
 
 // UTXO is an unspent transaction output
 // This is the same as a TxOutput except
-// it holds usfule information for creating
+// it holds useful information for creating
 // transaction inputs like the output index
 // and the transaction ID.
 type UTXO struct {
+	// The actual transaction output that
+	// has not been spent
 	*TxOutput
+	// Stores the info for creating a new
+	// input from the unspent output
 	index int
 	txid  []byte
 }
@@ -53,6 +55,15 @@ func (sts *chainStats) Update(tx *Transaction) error {
 	if len(txid) == 0 {
 		return errors.New("transaction has no ID")
 	}
+	// Inputs of a coinbase transactions do not reference
+	// an output.
+	// https://en.bitcoin.it/wiki/Transaction#Generation
+	if !tx.IsCoinbase() {
+		for _, in := range tx.Inputs {
+			sts.markSpent(in.TxID, int(in.OutIndex), in.PubKey)
+		}
+	}
+
 	for outIx, out := range tx.Outputs {
 		// check if the current transaction output index
 		// has been stored in the spent tx outputs
@@ -74,15 +85,6 @@ func (sts *chainStats) Update(tx *Transaction) error {
 			index:    outIx,
 			txid:     tx.ID,
 		})
-	}
-
-	// Inputs of a coinbase transactions do not reference
-	// an output.
-	// https://en.bitcoin.it/wiki/Transaction#Generation
-	if !tx.IsCoinbase() {
-		for _, in := range tx.Inputs {
-			sts.markSpent(in.TxID, int(in.OutIndex), in.PubKey)
-		}
 	}
 	return nil
 }
@@ -180,9 +182,9 @@ func FindOutputsToSpend(
 	amountNeeded uint64,
 ) []*UTXO {
 	var (
-		result     = make([]*UTXO, 0)
 		current    uint64                // current amount outputted via UTXOs
 		allunspent = set.Unspent(sender) // all the sender's UTXOs
+		result     = make([]*UTXO, 0)
 	)
 	for _, o := range allunspent {
 		// If a single output can be used
@@ -194,7 +196,7 @@ func FindOutputsToSpend(
 		// if we have already found the outputs needed
 		// to meet the amount needed then we just
 		// keep scanning the UTXOs for single outputs
-		// that could possiblly meet that quota.
+		// that could possibly meet that quota.
 		if current < amountNeeded {
 			current += o.Amount
 			result = append(result, o)
@@ -202,7 +204,7 @@ func FindOutputsToSpend(
 	}
 	if len(result) == 0 {
 		// dummy check. this should not happen
-		// given the assumtions
+		// given the assumptions
 		panic("no outputs to meet quota")
 	}
 	return result

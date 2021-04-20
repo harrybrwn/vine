@@ -2,11 +2,12 @@
 /bin/*
 /build/
 /dist/
-/blk*  # binaries
-/vine* # binaries
 /vendor/
+/vine
+/vine.exe
 /build.sh
 **/*.pb.go # protobuf code gen
+wix.json
 
 # Misc
 /.vscode/
@@ -15,6 +16,9 @@ bitcoin.pdf
 
 # Drafting
 /draft/
+
+# Testing
+/test
 
 # Managment and testing scripts
 /session.sh

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 
-	"github.com/harrybrwn/go-vine/block"
+	"github.com/harrybrwn/vine/block"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -61,11 +61,11 @@ func (n *Node) Tx(ctx context.Context, msg *TxMsg) (*Status, error) {
 		"from":    msg.Sender,
 		"tx.hash": hex.EncodeToString(msg.Tx.ID),
 		"tx.lock": msg.Tx.Lock,
-		"tx.fee":  msg.Tx.GetFee(n.txdb),
+		"tx.fee":  msg.Tx.Fee(n.txdb),
 	}).Info("rpc Tx")
 	err := msg.Tx.VerifySig(n.txdb)
 	if err != nil {
-		log.WithError(err).Warn("could not verify new tx signagure")
+		log.WithError(err).Warn("could not verify new tx signature")
 	}
 
 	// TODO follow the following logic instead of just adding the block

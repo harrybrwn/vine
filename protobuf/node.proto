@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package node;
 
-option go_package = "github.com/harrybrwn/go-ledger/node;node";
+option go_package = "github.com/harrybrwn/vine/node;node";
 
 import "protobuf/block.proto";
 

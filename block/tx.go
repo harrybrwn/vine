@@ -12,7 +12,8 @@ import (
 	"math/big"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/harrybrwn/go-vine/key"
+	"github.com/golang/protobuf/ptypes"
+	"github.com/harrybrwn/vine/key"
 )
 
 // ErrInvalidSignature is the error value given when a transaction has
@@ -29,6 +30,7 @@ func Coinbase(to key.Address) *Transaction {
 				TxID:      nil,
 				OutIndex:  -1,
 				Signature: nil,
+				PubKey:    nil,
 			},
 		},
 		Outputs: []*TxOutput{
@@ -57,11 +59,17 @@ type receiver struct {
 // NewTransaction creates a new transaction. The new transaction will not be
 // added to the chain.
 func NewTransaction(finder TxFinder, stats UTXOSet, descriptor TxDesc) (*Transaction, error) {
-	tx := new(Transaction)
+	tx := &Transaction{
+		ID:      nil,
+		Lock:    ptypes.TimestampNow(),
+		Inputs:  make([]*TxInput, 0, 1),
+		Outputs: make([]*TxOutput, 0, 1),
+	}
 	err := initTransaction(stats, tx, descriptor)
 	if err != nil {
 		return nil, err
 	}
+	tx.Lock = ptypes.TimestampNow()
 	return tx, tx.Sign(descriptor.From.PrivateKey(), finder)
 }
 
@@ -72,7 +80,7 @@ func initTransaction(
 ) (err error) {
 	var (
 		bal = stats.Bal(header.From)
-		// spedning is the total output being used up in transaction
+		// spending is the total output being used up in transaction
 		// including any amount that will be returned to the sender
 		// as change in an additional output
 		spending uint64
@@ -108,12 +116,17 @@ func initTransaction(
 // create a transaction. ignores the from field in all elements of the recv argument
 func createTx(stats *chainStats, from key.Sender, recv []TxDesc) (*Transaction, error) {
 	var (
-		tx = new(Transaction)
+		tx = &Transaction{
+			ID:      nil,
+			Lock:    ptypes.TimestampNow(),
+			Inputs:  make([]*TxInput, 0, 1),
+			Outputs: make([]*TxOutput, 0, 1),
+		}
 		// Sender's balance
 		bal = stats.Bal(from)
 		// Total amount the transacton initiator wants to spend
 		needed uint64
-		// spedning is the total output being used up in transaction
+		// spending is the total output being used up in transaction
 		// including any amount that will be returned to the sender
 		// as change in an additional output
 		spending uint64
@@ -161,8 +174,8 @@ func newOutputs(from key.Sender, balance uint64, recv []TxDesc) ([]*TxOutput, er
 		})
 	}
 	// If the sender did not spend their entire
-	// balence then an extra output is added which
-	// gives the sender the rest of their balence
+	// balance then an extra output is added which
+	// gives the sender the rest of their balance
 	if balance > 0 {
 		outs = append(outs, &TxOutput{
 			Amount:     balance,
@@ -236,7 +249,7 @@ func (tx *Transaction) VerifySig(find TxFinder) error {
 // GetFee will get the transaction fee for the transaction
 // The transaction fee is defined as the total input value
 // minus the total output value of a transaction.
-func (tx *Transaction) GetFee(finder TxFinder) uint64 {
+func (tx *Transaction) Fee(finder TxFinder) uint64 {
 	var (
 		input, output uint64
 	)

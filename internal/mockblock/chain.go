@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 
-	"github.com/harrybrwn/go-vine/block"
-	"github.com/harrybrwn/go-vine/key"
+	"github.com/harrybrwn/vine/block"
+	"github.com/harrybrwn/vine/key"
 )
 
 // Chain is an in memory blockchain used for testing

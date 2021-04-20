@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/harrybrwn/config"
-	"github.com/harrybrwn/go-vine/block"
-	"github.com/harrybrwn/go-vine/blockstore"
-	"github.com/harrybrwn/go-vine/key"
-	"github.com/harrybrwn/go-vine/key/wallet"
-	"github.com/harrybrwn/go-vine/node"
-	"github.com/harrybrwn/go-vine/p2p"
+	"github.com/harrybrwn/vine/block"
+	"github.com/harrybrwn/vine/blockstore"
+	"github.com/harrybrwn/vine/key"
+	"github.com/harrybrwn/vine/key/wallet"
+	"github.com/harrybrwn/vine/node"
+	"github.com/harrybrwn/vine/p2p"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -213,7 +213,7 @@ func newPeersCmd() *cobra.Command {
 
 func newHitCmd() *cobra.Command {
 	var hit protocol.ID
-	var gprcReq bool
+	var grpcReq bool
 	c := &cobra.Command{
 		Use:           "hit",
 		Short:         "Make calls to any node endpoint and return the first successful response",
@@ -237,7 +237,7 @@ func newHitCmd() *cobra.Command {
 				return errors.New("no endpoint to hit")
 			}
 
-			if gprcReq {
+			if grpcReq {
 				var conn *grpc.ClientConn
 				conn, err = grpc.Dial("", grpc.WithInsecure())
 				if err != nil {
@@ -350,7 +350,7 @@ func askFirstGRPCPeer(
 		}
 		conn.Close()
 	}
-	err = errors.New("no reponse from any peers")
+	err = errors.New("no response from any peers")
 	return err
 }
 
