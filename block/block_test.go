@@ -23,10 +23,18 @@ import (
 	"github.com/harrybrwn/vine/key/wallet"
 )
 
+// Toggle deterministic mode for some
+// testing setup functions.
+const deterministic = true
+
 func init() {
 	difficulty = 6
 	// difficulty = 16
 	// difficulty = 18
+
+	if deterministic {
+		rng = mathrand.New(mathrand.NewSource(13))
+	}
 }
 
 type testUser struct {
@@ -44,7 +52,12 @@ func users(n int) []*testUser {
 
 func testWallet(t *testing.T, seed int64) *wallet.Wallet {
 	t.Helper()
-	gen := mathrand.New(mathrand.NewSource(seed))
+	if !deterministic {
+		// if we are not in deterministic mode,
+		// create a random wallet
+		return wallet.New()
+	}
+	gen := mathrand.New(mathrand.NewSource(seed + 9))
 	key, err := ecdsa.GenerateKey(elliptic.P256(), gen)
 	if err != nil {
 		t.Fatal(err)
@@ -151,24 +164,25 @@ func TestPOW(t *testing.T) {
 
 func TestUTXOBalance(t *testing.T) {
 	eq, check := helpers(t)
-	harry := wallet.New()
+	bob := wallet.New()
 	jim := wallet.New()
-	c := newChain(harry)
+	c := newChain(bob)
 
-	check(c.addTx(jim, harry, 5))
+	check(c.addTx(jim, bob, 5))
 	stats := buildChainStats(c.Iter())
 	eq(stats.Bal(jim), 5)
-	eq(stats.Bal(harry), coinbaseValue-5)
+	eq(stats.Bal(bob), coinbaseValue-5)
 
-	check(c.addTx(jim, harry, 90))
+	check(c.addTx(jim, bob, 90))
 	stats = buildChainStats(c.Iter())
-	eq(stats.Bal(harry), 5)
+	eq(stats.Bal(bob), 5)
 	eq(stats.Bal(jim), 95)
 
-	check(c.addTx(harry, jim, 45))
+	check(c.addTx(bob, jim, 45))
 	stats = buildChainStats(c.Iter())
-	eq(stats.Bal(harry), 50)
+	eq(stats.Bal(bob), 50)
 	eq(stats.Bal(jim), 50)
+	c.verifyAll(t)
 }
 
 func TestMerkleTree(t *testing.T) {
@@ -179,7 +193,7 @@ func TestMerkleTree(t *testing.T) {
 	}
 	sh := func(s string) []byte { return h([]byte(s)) }
 
-	root := merkleroot([][]byte{})
+	root := merkleroot([][]byte{}, sha256.New())
 	if len(root) != 0 {
 		t.Error("no hashes should hash to zero length root")
 	}
@@ -200,44 +214,22 @@ func TestMerkleTree(t *testing.T) {
 		h([]byte("three")),
 		h([]byte("four")),
 		h([]byte("five")),
-	})
+	}, sha256.New())
 	if bytes.Compare(res, expected) != 0 {
 		t.Error("wrong merkle root computed")
 	}
 
-	root = merkleroot([][]byte{sh("a"), sh("b")})
+	root = merkleroot([][]byte{sh("a"), sh("b")}, sha256.New())
 	res = h(join(sh("a"), sh("b")))
 
 	if bytes.Compare(root, res) != 0 {
 		t.Error("wrong result")
 	}
 
-	root = merkleroot([][]byte{sh("test")})
+	root = merkleroot([][]byte{sh("test")}, sha256.New())
 	res = sh("test")
 	if bytes.Compare(root, res) != 0 {
 		t.Error("wrong result")
-	}
-}
-
-func TestGetSpendableOutputs(t *testing.T) {
-	user1, user2 := wallet.New(), wallet.New()
-	if user2 == nil {
-		t.Error("")
-	}
-	c := newChain(user1)
-	it := c.Iter()
-	for {
-		block := it.Next()
-		for _, tx := range block.Transactions {
-			for _, o := range tx.Outputs {
-				if bytes.Compare(o.PubKeyHash, user1.PubKeyHash()) == 0 {
-					// fmt.Println(user1, o)
-				}
-			}
-		}
-		if IsGenisis(block) {
-			break
-		}
 	}
 }
 
@@ -250,25 +242,29 @@ func TestBasicTransations(t *testing.T) {
 	eq(s.Bal(user2), 0)
 	eq(s.Bal(user3), 0)
 
-	check(c.pushWithStats(s, []TxDesc{{user1, user2, 10}}))
+	check(c.pushWithStats(s, []TxDesc{{From: user1, To: user2, Amount: 10}}))
 	eq(s.Bal(user1), 90)
 	eq(s.Bal(user2), 10)
 	eq(s.Bal(user3), 0)
+	check(c.txlist[len(c.txlist)-1].VerifySig(c))
 
 	check(c.pushWithStats(s, []TxDesc{{From: user1, To: user3, Amount: 50}}))
 	eq(s.Bal(user1), 40)
 	eq(s.Bal(user2), 10)
 	eq(s.Bal(user3), 50)
+	check(c.txlist[len(c.txlist)-1].VerifySig(c))
 
 	check(c.pushWithStats(s, []TxDesc{{From: user2, To: user3, Amount: 5}}))
 	eq(s.Bal(user1), 40)
 	eq(s.Bal(user2), 5)
 	eq(s.Bal(user3), 55)
+	check(c.txlist[len(c.txlist)-1].VerifySig(c))
 
 	check(c.pushWithStats(s, []TxDesc{{From: user1, To: user3, Amount: 5}}))
 	eq(s.Bal(user1), 35)
 	eq(s.Bal(user2), 5)
 	eq(s.Bal(user3), 60)
+	check(c.txlist[len(c.txlist)-1].VerifySig(c))
 
 	check(c.pushWithStats(s, []TxDesc{{From: user3, To: user2, Amount: 7}}))
 	eq(s.Bal(user1), 35)
@@ -293,11 +289,24 @@ func TestBasicTransations(t *testing.T) {
 	eq(s.Bal(user1), 25)
 	eq(s.Bal(user2), 32)
 	eq(s.Bal(user3), 43)
+	for _, tx := range c.txlist {
+		check(tx.VerifySig(c))
+	}
 }
 
 func TestTransaction(t *testing.T) {
+	// u := testWallet(t, 1)
+	// rr, ss, _ := ecdsa.Sign(rng, u.PrivateKey(), []byte{})
+	// fmt.Println(rr)
+	// fmt.Println(ss.BitLen() / 8)
+	// fmt.Println(rr.BitLen() + ss.BitLen())
+	// fmt.Println(len(ss.Bytes()))
+	// fmt.Println(ss.Bytes())
+
+	// return
+
 	eq, check := helpers(t)
-	user1, user2, user3 := wallet.New(), wallet.New(), wallet.New()
+	user1, user2, user3 := testWallet(t, 1), testWallet(t, 2), testWallet(t, 3)
 	c := newChain(user1)
 	s := buildChainStats(c.Iter())
 	eq(s.Bal(user1), coinbaseValue)
@@ -305,14 +314,24 @@ func TestTransaction(t *testing.T) {
 	eq(s.Bal(user3), 0)
 
 	check(c.pushWithStats(s, []TxDesc{{user1, user2, 10}}))
+	c.verifyPrevTxSig(t)
 	eq(s.Bal(user1), 90)
 	eq(s.Bal(user2), 10)
 	eq(s.Bal(user3), 0)
+
+	// return
 
 	check(c.pushWithStats(s, []TxDesc{
 		{From: user1, To: user2, Amount: 5},
 		{From: user2, To: user3, Amount: 10},
 	}))
+	c.verifyPrevTxSig(t)
+	if !c.verifyAll(t) {
+		dbg := newChainDebugger(c, []key.Sender{user1, user2, user3})
+		dbg.printChain(c.Iter())
+		return
+	}
+	// logging = false
 	eq(s.Bal(user1), 85)
 	eq(s.Bal(user2), 5)
 	eq(s.Bal(user3), 10)
@@ -322,6 +341,7 @@ func TestTransaction(t *testing.T) {
 		{From: user3, To: user2, Amount: 5},
 		{From: user1, To: user2, Amount: 25},
 	}))
+	c.verifyPrevTxSig(t)
 	eq(s.Bal(user1), 60)
 	eq(s.Bal(user2), 35)
 	eq(s.Bal(user3), 5)
@@ -331,23 +351,19 @@ func TestTransaction(t *testing.T) {
 		{From: user1, To: user2, Amount: 5},
 		{From: user1, To: user3, Amount: 10},
 	})
-	check(c.prevtx[0].VerifySig(c))
-	check(c.blocks[len(c.blocks)-1].Transactions[0].VerifySig(c))
+	c.verifyPrevTxSig(t)
 	eq(s.Bal(user1), 45)
 	eq(s.Bal(user2), 40)
 	eq(s.Bal(user3), 15)
 
-	user4 := wallet.New()
+	user4 := testWallet(t, 4)
 	check(c.pushWithStats(s, []TxDesc{
 		{From: user1, To: user4, Amount: 45},
 		{From: user2, To: user4, Amount: 40},
 		{From: user3, To: user4, Amount: 15},
 	}))
-	t.Log("TODO verify these new transactions")
-	// TODO uncomment this out when it does not break things
-	// for _, tx := range c.prevtx {
-	// 	check(tx.VerifySig(c))
-	// }
+	c.verifyPrevTxSig(t)
+
 	eq(s.Bal(user4), 100)
 	for i, u := range []*wallet.Wallet{
 		user1,
@@ -358,9 +374,14 @@ func TestTransaction(t *testing.T) {
 			t.Errorf(`Balance should be zero for user%d, got %v`, i+1, b)
 		}
 	}
+	if !c.verifyAll(t) {
+		dbg := newChainDebugger(c, []key.Sender{user1, user2, user3, user4})
+		dbg.printChain(c.Iter())
+	}
 }
 
 func TestTxSign(t *testing.T) {
+	t.Skip()
 	e := func(er error) {
 		t.Helper()
 		if er != nil {
@@ -477,6 +498,7 @@ func TestChainStats(t *testing.T) {
 	check(err)
 	check(tx.Sign(user3.PrivateKey(), c))
 	c.append(New([]*Transaction{tx}, c.tophash()))
+	c.verifyAll(t)
 
 	s = buildChainStats(c.Iter())
 	eq(s.Bal(user1), 35+50)
@@ -484,10 +506,18 @@ func TestChainStats(t *testing.T) {
 	eq(s.Bal(user3), 0)
 
 	tx = new(Transaction)
-	check(initTransaction(s, tx, TxDesc{From: user1, To: user3, Amount: 1}))
-	check(initTransaction(s, tx, TxDesc{From: user2, To: user3, Amount: 2}))
+	check(tx.append(s, TxDesc{From: user1, To: user3, Amount: 1}))
+	check(tx.append(s, TxDesc{From: user2, To: user3, Amount: 2}))
 	tx.ID = tx.hash()
+	// fmt.Printf("%x\n", tx.ID)
+	check(tx.Sign(user1.PrivateKey(), c))
 	c.append(New([]*Transaction{tx}, c.tophash()))
+	check(s.Update(tx))
+
+	// dbg := newChainDebugger(c, []key.Sender{user1, user2, user3})
+	// dbg.printChain(c.Iter())
+	// check(tx.VerifySig(c))
+	// c.verifyAll(t)
 
 	s = buildChainStats(c.Iter())
 	eq(s.Bal(user1), 84)
@@ -552,8 +582,8 @@ func TestLarge(t *testing.T) {
 		{Amount: 8, From: users[2], To: users[3]},
 		{Amount: 8, From: users[2], To: users[4]},
 		{Amount: 8, From: users[2], To: users[5]},
-		// {Amount: 0, From: users[1], To: users[0]},
-		// {Amount: 0, From: users[0], To: users[1]},
+		{Amount: 0, From: users[1], To: users[0]},
+		{Amount: 0, From: users[0], To: users[1]},
 	}))
 	eq(s.Bal(users[2]), 0)
 	eq(s.Bal(users[3]), 8+2)
@@ -566,7 +596,6 @@ func TestLarge(t *testing.T) {
 		{Amount: s.Bal(users[4]), From: users[4], To: users[5]},
 	}))
 	eq(s.Bal(users[5]), 28)
-	// dbg.printChain(c.Iter())
 }
 
 func eq(t *testing.T, a, b interface{}) {
@@ -587,7 +616,7 @@ func eq(t *testing.T, a, b interface{}) {
 
 func helpers(t *testing.T) (
 	func(a, b uint64),
-	func(error),
+	func(error) bool,
 ) {
 	t.Helper()
 	eq := func(a, b uint64) {
@@ -596,11 +625,13 @@ func helpers(t *testing.T) (
 			t.Errorf("%v and %v not equal", a, b)
 		}
 	}
-	check := func(e error) {
+	check := func(e error) bool {
 		t.Helper()
 		if e != nil {
 			t.Error(e)
+			return false
 		}
+		return true
 	}
 	return eq, check
 }
@@ -616,7 +647,6 @@ func newChain(user key.Receiver) *chain {
 		b := Genisis(Coinbase(user))
 		c.append(b)
 	}
-	c.txlist = append(c.txlist, c.blocks[0].Transactions...)
 	return c
 }
 
@@ -628,6 +658,16 @@ type chain struct {
 
 	txlist []*Transaction
 	prevtx []*Transaction
+}
+
+func buildChainStats(it Iterator) *chainStats {
+	var s = &chainStats{
+		spent:    make(map[string][]int),
+		balances: make(map[string]uint64),
+		utxo:     make(map[string][]*UTXO),
+	}
+	s.ReIndex(it)
+	return s
 }
 
 func (c *chain) addTx(to key.Receiver, from key.Sender, amount uint64) error {
@@ -688,17 +728,44 @@ func (c *chain) pushWithStats(stats *chainStats, heads []TxDesc) (err error) {
 		if err != nil {
 			return err
 		}
+		if err = stats.Update(tx); err != nil {
+			return err
+		}
 		txs = append(txs, tx)
-	}
-
-	for _, tx := range txs {
-		// update the utxo set with the new transactions
-		stats.Update(tx)
 	}
 
 	blk := New(txs, c.tophash())
 	c.append(blk)
 	return
+}
+
+func (c *chain) verifyAll(t *testing.T) bool {
+	t.Helper()
+	var (
+		err     error
+		success = true
+		txno    = 0
+		it      = c.Iter()
+		j       = 0
+	)
+	for {
+		blk := it.Next()
+		if IsGenisis(blk) {
+			break
+		}
+		for i, tx := range blk.Transactions {
+			if tx.IsCoinbase() {
+				continue
+			}
+			if err = tx.VerifySig(c); err != nil {
+				t.Errorf("(%d) [block %d, tx %d]: TxID: %s, error: %v", txno, j, i, tx.StrID(), err)
+				success = false
+			}
+			txno++
+		}
+		j++
+	}
+	return success
 }
 
 func (c *chain) push(heads []TxDesc) (err error) {
@@ -738,6 +805,23 @@ func (c *chain) tophash() []byte {
 	return c.blocks[len(c.blocks)-1].Hash
 }
 
+func (c *chain) verifyPrevTxSig(t *testing.T) {
+	t.Helper()
+	tx := c.txlist[len(c.txlist)-1]
+	err := tx.VerifySig(c)
+	switch err {
+	case nil:
+		return
+	case ErrInvalidSignature:
+		t.Errorf("got an invalid signature in tx %s", tx.StrID())
+		raw, _ := json.Marshal(map[string]interface{}{"txid": tx.ID})
+		t.Errorf("%s\n", raw)
+		panic(err)
+	default:
+		t.Error(err)
+	}
+}
+
 func (c *chain) Transaction(id []byte) *Transaction {
 	if tx, ok := c.txs[hex.EncodeToString(id)]; ok {
 		return tx
@@ -747,11 +831,7 @@ func (c *chain) Transaction(id []byte) *Transaction {
 
 // Push will add a block to the chain from just the data given.
 func (c *chain) Push(*Block) error {
-	// bytedata := []byte(data)
-	// prev := c.blocks[len(c.blocks)-1]
-	// b := prev.CreateNext(bytedata)
-	// c.append(b)
-	return nil
+	panic("Push not implemented")
 }
 
 func (c *chain) Iter() Iterator {
@@ -838,6 +918,7 @@ func (dbg chaindebugger) printChain(it Iterator) {
 			break
 		}
 	}
+	fmt.Fprintf(w, "End Chain")
 }
 
 func (dbg chaindebugger) inputStr(in *TxInput) string {

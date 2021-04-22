@@ -14,12 +14,21 @@ type UTXOSet interface {
 	Bal(key.Address) uint64
 	Unspent(key.Address) []*UTXO
 	Update(*Transaction) error
+	ReIndex(Iterator) error
 }
 
 // BuildUTXOSet will traverse the entire chain to
 // build an indexed unspent transaction set
-func BuildUTXOSet(i Iterator) UTXOSet {
-	return buildChainStats(i)
+func BuildUTXOSet(it Iterator) UTXOSet {
+	var set = &chainStats{
+		spent:    make(map[string][]int),
+		balances: make(map[string]uint64),
+		utxo:     make(map[string][]*UTXO),
+	}
+	if err := set.ReIndex(it); err != nil {
+		panic(err) // TODO handle this or make sure it doesn't happen
+	}
+	return set
 }
 
 // UTXO is an unspent transaction output
@@ -89,31 +98,23 @@ func (sts *chainStats) Update(tx *Transaction) error {
 	return nil
 }
 
-func buildChainStats(it Iterator) *chainStats {
-	var (
-		block *Block
-		s     = &chainStats{
-			spent:    make(map[string][]int),
-			balances: make(map[string]uint64),
-			utxo:     make(map[string][]*UTXO),
-		}
-	)
-
+func (sts *chainStats) ReIndex(it Iterator) error {
+	var block *Block
 	for {
 		block = it.Next()
 		for _, tx := range block.Transactions {
-			if err := s.Update(tx); err != nil {
-				panic(err) // TODO handle this
+			if err := sts.Update(tx); err != nil {
+				return err
 			}
 		}
 		if IsGenisis(block) {
 			if ic, ok := it.(io.Closer); ok {
-				ic.Close()
+				return ic.Close()
 			}
 			break
 		}
 	}
-	return s
+	return nil
 }
 
 func (sts *chainStats) Bal(user key.Address) (bal uint64) {
@@ -131,6 +132,8 @@ func (sts *chainStats) markSpent(txid []byte, index int, pubkey []byte) {
 	sts.spent[id] = append(sts.spent[id], index)
 	userkey := hex.EncodeToString(key.PubKey(pubkey).Hash())
 
+	// Save a copy of the user's UTXOs to modify later
+	// and check that the user actually does exist in the set
 	unspent, ok := sts.utxo[userkey]
 	if !ok {
 		return
@@ -169,10 +172,12 @@ func (sts *chainStats) txOutputIsSpent(
 	return false
 }
 
-// FindOutputsToSpend will find unspent transaction
-// outputs needed for a transaction Assumes that
-// the balance has already been checked and the
-// publickeyhash owns enough outputs
+// FindOutputsToSpend will find unspent transaction outputs
+// needed for a transaction. Guaranteed to return at least
+// one UTXO and a combined value greater than or equal to
+// the amount needed (given as an argument). Assumes that
+// the balance has already been checked and the publickeyhash
+// owns enough outputs.
 //
 // This function assumes that the sender has enough
 // funds to meet the quota.

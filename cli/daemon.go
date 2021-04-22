@@ -22,6 +22,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/pkg/errors"
 	"github.com/sevlyar/go-daemon"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
@@ -31,9 +32,9 @@ import (
 
 func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 	var (
-		init    bool
+		init   bool
 		detach bool
-		kill    bool
+		kill   bool
 	)
 	c := &cobra.Command{
 		Use:           "daemon",
@@ -47,6 +48,7 @@ func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 					return err
 				}
 			}
+
 			pidFile := filepath.Join(config.GetString("config"), "daemon.pid")
 			if kill {
 				pid, err := daemon.ReadPidFile(pidFile)
@@ -55,6 +57,9 @@ func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 				}
 				p := &os.Process{Pid: pid}
 				return p.Signal(os.Interrupt)
+			}
+			if fileExists(pidFile) {
+				return errors.New("Daemon already running")
 			}
 			if detach {
 				ctx := &daemon.Context{
@@ -82,6 +87,8 @@ func newDaemonCmd(flags *GlobalFlags) *cobra.Command {
 			}
 			hooks := []daemonHook{events}
 			if flags.Silent {
+				// only run the command shell when
+				// not outputting to stdout
 				hooks = append(hooks, cliHook)
 			}
 			return runDaemon(hooks...)

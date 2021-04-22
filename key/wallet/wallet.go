@@ -21,10 +21,9 @@ const Version1 byte = 0x00
 
 // New creates a new wallet with the default version.
 func New() *Wallet {
-	pub, priv := key.GenPair()
+	_, priv := key.GenPair()
 	privkey, _, _ := crypto.ECDSAKeyPairFromKey(priv)
 	return &Wallet{
-		pub:     pub,
 		priv:    priv,
 		version: Version1,
 		privkey: privkey,
@@ -34,10 +33,9 @@ func New() *Wallet {
 // Versioned will create a new wallet with a given
 // version number.
 func Versioned(v byte) *Wallet {
-	pub, priv := key.GenPair()
+	_, priv := key.GenPair()
 	privkey, _, _ := crypto.ECDSAKeyPairFromKey(priv)
 	return &Wallet{
-		pub:     pub,
 		priv:    priv,
 		version: v,
 		privkey: privkey,
@@ -48,10 +46,6 @@ func Versioned(v byte) *Wallet {
 func FromKey(priv *ecdsa.PrivateKey) *Wallet {
 	cryptoPriv, _, _ := crypto.ECDSAKeyPairFromKey(priv)
 	return &Wallet{
-		pub: bytes.Join([][]byte{
-			priv.PublicKey.X.Bytes(),
-			priv.PublicKey.Y.Bytes(),
-		}, nil),
 		priv:    priv,
 		privkey: cryptoPriv,
 		version: Version1,
@@ -61,7 +55,6 @@ func FromKey(priv *ecdsa.PrivateKey) *Wallet {
 // Wallet is a digital wallet containing a
 // public key and private key
 type Wallet struct {
-	pub     key.PubKey
 	priv    *ecdsa.PrivateKey
 	version byte
 
@@ -77,7 +70,10 @@ const (
 
 // PublicKey return's the wallet's public key
 func (w *Wallet) PublicKey() []byte {
-	raw, _ := w.pub.Raw()
+	raw, err := x509.MarshalPKIXPublicKey(&w.priv.PublicKey)
+	if err != nil {
+		panic(err)
+	}
 	return raw
 }
 
@@ -96,7 +92,7 @@ func (w *Wallet) Address() string {
 	// | 1 |            20             |             4             |
 	var addresshash [addressLength]byte
 	addresshash[0] = w.version
-	pubkh := w.pub.Hash()
+	pubkh := key.HashECDSAPubKey(&w.priv.PublicKey)
 	copy(addresshash[versionLength:], pubkh)
 	copy(addresshash[21:], checksum(addresshash[:21]))
 	return base58.Encode(addresshash[:])
@@ -127,7 +123,7 @@ func ValidAddress(address string) bool {
 // PubKeyHash will generate the hash for
 // the wallet's public key
 func (w *Wallet) PubKeyHash() []byte {
-	return w.pub.Hash()
+	return key.HashECDSAPubKey(&w.priv.PublicKey)
 }
 
 type serializablePrivateKey struct {
@@ -164,10 +160,6 @@ func (w *Wallet) ReadFrom(r io.Reader) (int64, error) {
 		return 0, err
 	}
 	w.priv = priv
-	w.pub = bytes.Join([][]byte{
-		priv.PublicKey.X.Bytes(),
-		priv.PublicKey.Y.Bytes(),
-	}, nil)
 	w.privkey, _, err = crypto.ECDSAKeyPairFromKey(priv)
 	if err != nil {
 		return 0, err

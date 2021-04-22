@@ -3,12 +3,12 @@ package block
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"io"
 	"math/big"
 
 	"github.com/golang/protobuf/proto"
@@ -58,63 +58,20 @@ type receiver struct {
 
 // NewTransaction creates a new transaction. The new transaction will not be
 // added to the chain.
-func NewTransaction(finder TxFinder, stats UTXOSet, descriptor TxDesc) (*Transaction, error) {
-	tx := &Transaction{
-		ID:      nil,
-		Lock:    ptypes.TimestampNow(),
-		Inputs:  make([]*TxInput, 0, 1),
-		Outputs: make([]*TxOutput, 0, 1),
-	}
-	err := initTransaction(stats, tx, descriptor)
+func NewTransaction(finder TxFinder, stats UTXOSet, desc TxDesc) (*Transaction, error) {
+	tx, err := createTx(stats, desc.From, []TxDesc{desc})
 	if err != nil {
 		return nil, err
 	}
-	tx.Lock = ptypes.TimestampNow()
-	return tx, tx.Sign(descriptor.From.PrivateKey(), finder)
-}
-
-func initTransaction(
-	stats UTXOSet,
-	tx *Transaction,
-	header TxDesc,
-) (err error) {
-	var (
-		bal = stats.Bal(header.From)
-		// spending is the total output being used up in transaction
-		// including any amount that will be returned to the sender
-		// as change in an additional output
-		spending uint64
-	)
-	if header.Amount > bal {
-		return ErrNotEnoughFunds
-	}
-
-	utxouts := FindOutputsToSpend(stats, header.From, header.Amount)
-
-	for _, o := range utxouts {
-		tx.Inputs = append(tx.Inputs, &TxInput{
-			TxID:      o.txid,
-			OutIndex:  int32(o.index),
-			PubKey:    header.From.PublicKey(),
-			Signature: nil,
-		})
-		spending += o.Amount
-	}
-
-	outs, err := newOutputs(
-		header.From, spending,
-		[]TxDesc{header},
-	)
+	err = stats.Update(tx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	tx.Outputs = append(tx.Outputs, outs...)
-	tx.ID = tx.hash()
-	return nil
+	return tx, tx.Sign(desc.From.PrivateKey(), finder)
 }
 
 // create a transaction. ignores the from field in all elements of the recv argument
-func createTx(stats *chainStats, from key.Sender, recv []TxDesc) (*Transaction, error) {
+func createTx(stats UTXOSet, from key.Sender, recv []TxDesc) (*Transaction, error) {
 	var (
 		tx = &Transaction{
 			ID:      nil,
@@ -157,6 +114,32 @@ func createTx(stats *chainStats, from key.Sender, recv []TxDesc) (*Transaction, 
 	return tx, nil
 }
 
+func (tx *Transaction) append(utxo UTXOSet, d TxDesc) error {
+	var (
+		bal      = utxo.Bal(d.From)
+		spending uint64
+	)
+	if d.Amount > bal {
+		return ErrNotEnoughFunds
+	}
+	utxouts := FindOutputsToSpend(utxo, d.From, d.Amount)
+	for _, o := range utxouts {
+		tx.Inputs = append(tx.Inputs, &TxInput{
+			TxID:      o.txid,
+			OutIndex:  int32(o.index),
+			PubKey:    d.From.PublicKey(),
+			Signature: nil,
+		})
+		spending += o.Amount
+	}
+	outs, err := newOutputs(d.From, spending, []TxDesc{d})
+	if err != nil {
+		return err
+	}
+	tx.Outputs = append(tx.Outputs, outs...)
+	return nil
+}
+
 func newOutputs(from key.Sender, balance uint64, recv []TxDesc) ([]*TxOutput, error) {
 	var (
 		n    = len(recv)
@@ -179,37 +162,44 @@ func newOutputs(from key.Sender, balance uint64, recv []TxDesc) ([]*TxOutput, er
 	if balance > 0 {
 		outs = append(outs, &TxOutput{
 			Amount:     balance,
-			PubKeyHash: from.PubKeyHash(),
+			PubKeyHash: from.PubKeyHash(), // back to sender
 		})
 	}
 	return outs, nil
 }
 
-// Sign signs a tx
+var rng io.Reader = rand.Reader
+
+// Sign signs the transaction
 func (tx *Transaction) Sign(priv *ecdsa.PrivateKey, finder TxFinder) error {
 	if tx.IsCoinbase() {
 		return nil
 	}
 	var (
+		// Deep copy the current transaction
 		txcp = proto.Clone(tx).(*Transaction)
 		prev *Transaction
 	)
 
+	// Loop over the copied transaction inputs
 	for i, input := range txcp.Inputs {
-		prev = finder.Transaction(input.TxID)
+		prev = proto.Clone(finder.Transaction(input.TxID)).(*Transaction)
 		if prev == nil || prev.ID == nil {
 			return errors.New("transaction does not exist or is malformed")
 		}
-		input.Signature = nil
+
 		input.PubKey = prev.Outputs[input.OutIndex].PubKeyHash
+		input.Signature = nil // double check that this is nil
 		txHash := txcp.hash()
 		input.PubKey = nil
 
-		r, s, err := ecdsa.Sign(rand.Reader, priv, txHash)
+		sig, err := ecdsa.SignASN1(rng, priv, txHash)
 		if err != nil {
 			return err
 		}
-		tx.Inputs[i].Signature = bytes.Join([][]byte{r.Bytes(), s.Bytes()}, nil)
+		// Do not use copied input or deep copied transaction,
+		// this operation should persist.
+		tx.Inputs[i].Signature = sig
 	}
 	return nil
 }
@@ -220,26 +210,32 @@ func (tx *Transaction) VerifySig(find TxFinder) error {
 		return nil
 	}
 	var (
-		txcp       = proto.Clone(tx).(*Transaction)
-		curve      = elliptic.P256()
-		prev       *Transaction
-		x, y, r, s *big.Int
-		pub        ecdsa.PublicKey
-		txHash     []byte
+		txcp   = proto.Clone(tx).(*Transaction)
+		prev   *Transaction
+		pub    *ecdsa.PublicKey
+		txHash []byte
+		err    error
 	)
+
+	for i := range txcp.Inputs {
+		// Make sure that all the signatures in the tx copy
+		// do not exist, this will change the transaction ID
+		// used to verify those signatures.
+		txcp.Inputs[i].Signature = nil
+	}
 
 	for i, input := range txcp.Inputs {
 		prev = find.Transaction(input.TxID)
-		txcp.Inputs[i].Signature = nil
 		// set the public key to get the correct transaction hash
-		txcp.Inputs[i].PubKey = prev.Outputs[input.OutIndex].PubKeyHash
+		input.PubKey = prev.Outputs[input.OutIndex].PubKeyHash
 		txHash = txcp.hash()
-		txcp.Inputs[i].PubKey = nil
+		input.PubKey = nil
 
-		x, y = splitBytes(tx.Inputs[i].PubKey) // get the unmodified input public key
-		pub = ecdsa.PublicKey{Curve: curve, X: x, Y: y}
-		r, s = splitBytes(tx.Inputs[i].Signature)
-		if !ecdsa.Verify(&pub, txHash, r, s) {
+		pub, err = key.UnmarshalPubKey(tx.Inputs[i].PubKey)
+		if err != nil {
+			return err
+		}
+		if !ecdsa.VerifyASN1(pub, txHash, tx.Inputs[i].Signature) {
 			return ErrInvalidSignature
 		}
 	}
@@ -296,7 +292,7 @@ func txMerkleRoot(txs []*Transaction) ([]byte, error) {
 		hashes = append(hashes, hash.Sum(nil))
 		hash.Reset()
 	}
-	return merkleroot(hashes), nil
+	return merkleroot(hashes, sha256.New()), nil
 }
 
 func (tx *Transaction) hash() []byte {

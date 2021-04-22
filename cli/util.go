@@ -227,3 +227,8 @@ func keypoll(cancel func()) {
 func loggableHash(h []byte) []interface{} {
 	return []interface{}{h[:5], h[len(h)-3:]}
 }
+
+func fileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return !os.IsNotExist(err)
+}

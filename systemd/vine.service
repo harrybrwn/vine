@@ -3,7 +3,7 @@ Description=Blockchain background daemon service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/blk daemon
+ExecStart=/usr/local/bin/vine daemon
 Environment=IN_SYSTEMD=true
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure

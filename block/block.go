@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"hash"
 )
 
 // MineReward is the reward you get from mining a block
@@ -127,11 +128,8 @@ func (b *Block) CreateNext(data []byte) *Block {
 	return block
 }
 
-func merkleroot(hashes [][]byte) []byte {
-	var (
-		l      = len(hashes)
-		hasher = sha256.New()
-	)
+func merkleroot(hashes [][]byte, hasher hash.Hash) []byte {
+	var l = len(hashes)
 	if l == 0 {
 		return nil
 	}
