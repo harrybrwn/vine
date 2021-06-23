@@ -14,6 +14,7 @@ builds:
         - -s -w
         - -X github.com/harrybrwn/vine/cli.version={{ .Version }}
         - -X github.com/harrybrwn/vine/cli.commit={{ .Commit }}
+        - -X github.com/harrybrwn/vine/cli.date={{ .Date }}
     id: linux
     goos: [linux]
     goarch:
@@ -26,7 +27,7 @@ builds:
   - <<: *base_build
     id: macos
     goos: [darwin]
-    goarch: [amd64]
+    goarch: [amd64, arm64]
   - <<: *base_build
     id: win
     goos: [windows]
@@ -51,9 +52,12 @@ nfpms:
   - <<: &descr
       description: A blockchain
     file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    replacements: *reps
     maintainer: Harry Brown <harrybrown98@gmail.com>
-    license:
+    replacements:
+      linux: Linux
+      "386": i386
+      amd64: x86_64
+    license: Apache 2.0
 
     dependencies: []
     suggests: []
@@ -61,13 +65,16 @@ nfpms:
     formats:
       - deb
       - rpm
+      - apk
 
     bindir: /usr/local/bin
     empty_folders: []
     contents:
       # Documentation
       - src: README.md
-        dst: /usr/local/etc/vine/README.md
+        dst: /usr/local/share/vine/README.md
+      - src: LICENSE
+        dst: /usr/local/share/vine/LICENSE
 
       # Shell Completions
       - src: build/completion/bash
@@ -76,10 +83,10 @@ nfpms:
         dst: /usr/share/zsh/vendor-completions/_vine
 
       # systemd
-      - src: systemd/vine-ledger.service
-        dst: /usr/lib/systemd/system/vine-ledger.service
+      - src: systemd/vine.service
+        dst: /usr/lib/systemd/system/vine.service
         file_info:
-          mode: 0666 # anyone can read/write
+          mode: 0644
 
     #scripts:
     #  postinstall: scripts/installation/postinstall.sh

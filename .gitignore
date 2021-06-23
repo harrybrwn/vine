@@ -6,8 +6,8 @@
 /vine
 /vine.exe
 /build.sh
+*.deb
 **/*.pb.go # protobuf code gen
-wix.json
 
 # Misc
 /.vscode/
@@ -32,4 +32,5 @@ bitcoin.pdf
 notes.txt
 notes.md
 TODO*
+*.json
 

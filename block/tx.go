@@ -5,9 +5,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 
@@ -44,6 +46,53 @@ func Coinbase(to key.Address) *Transaction {
 	return tx
 }
 
+type TransactionBuilder struct {
+	// map of x509 encoded private key to tx data
+	txs map[[121]byte]*builderMetaData
+	set UTXOSet
+}
+
+type builderMetaData struct {
+	from key.Sender
+	recv []TxDesc
+}
+
+func (txb *TransactionBuilder) Append(utxo UTXOSet, d TxDesc) error {
+	var key [121]byte
+	b, err := x509.MarshalECPrivateKey(d.From.PrivateKey())
+	if err != nil {
+		return err
+	}
+	copy(key[:], b)
+
+	senderData, ok := txb.txs[key]
+	if ok {
+		senderData.recv = append(txb.txs[key].recv, d)
+	} else {
+		txb.txs[key] = &builderMetaData{
+			from: d.From,
+			recv: []TxDesc{d},
+		}
+	}
+	return nil
+}
+
+func (txb *TransactionBuilder) BuildTransactions() ([]*Transaction, error) {
+	txs := make([]*Transaction, 0)
+	for _, meta := range txb.txs {
+		tx, err := createTx(txb.set, meta.from, meta.recv)
+		if err != nil {
+			return nil, err
+		}
+		txs = append(txs, tx)
+	}
+	return txs, nil
+}
+
+func (txb *TransactionBuilder) Reset() {
+	txb.txs = make(map[[121]byte]*builderMetaData)
+}
+
 // TxDesc describes a transaction at a high level
 type TxDesc struct {
 	From   key.Sender
@@ -58,19 +107,33 @@ type receiver struct {
 
 // NewTransaction creates a new transaction. The new transaction will not be
 // added to the chain.
-func NewTransaction(finder TxFinder, stats UTXOSet, desc TxDesc) (*Transaction, error) {
-	tx, err := createTx(stats, desc.From, []TxDesc{desc})
-	if err != nil {
-		return nil, err
+func NewTransaction() *Transaction {
+	// tx, err := createTx(stats, desc.From, []TxDesc{desc})
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// err = stats.Update(tx)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// return tx, tx.Sign(desc.From.PrivateKey(), finder)
+	return &Transaction{
+		ID:      nil,
+		Lock:    ptypes.TimestampNow(),
+		Inputs:  make([]*TxInput, 0, 1),
+		Outputs: make([]*TxOutput, 0, 1),
 	}
-	err = stats.Update(tx)
-	if err != nil {
-		return nil, err
-	}
-	return tx, tx.Sign(desc.From.PrivateKey(), finder)
 }
 
-// create a transaction. ignores the from field in all elements of the recv argument
+func (tx *Transaction) Finalize() {
+	tx.ID = tx.hash()
+}
+
+func CreateTx(stats UTXOSet, from key.Sender, recv []TxDesc) (*Transaction, error) {
+	return createTx(stats, from, recv)
+}
+
+// CreateTx create a transaction. ignores the from field in all elements of the recv argument
 func createTx(stats UTXOSet, from key.Sender, recv []TxDesc) (*Transaction, error) {
 	var (
 		tx = &Transaction{
@@ -114,7 +177,7 @@ func createTx(stats UTXOSet, from key.Sender, recv []TxDesc) (*Transaction, erro
 	return tx, nil
 }
 
-func (tx *Transaction) append(utxo UTXOSet, d TxDesc) error {
+func (tx *Transaction) Append(utxo UTXOSet, d TxDesc) error {
 	var (
 		bal      = utxo.Bal(d.From)
 		spending uint64
@@ -183,9 +246,11 @@ func (tx *Transaction) Sign(priv *ecdsa.PrivateKey, finder TxFinder) error {
 
 	// Loop over the copied transaction inputs
 	for i, input := range txcp.Inputs {
-		prev = proto.Clone(finder.Transaction(input.TxID)).(*Transaction)
+		// prev = proto.Clone(finder.Transaction(input.TxID)).(*Transaction)
+		prev = finder.Transaction(input.TxID)
 		if prev == nil || prev.ID == nil {
-			return errors.New("transaction does not exist or is malformed")
+			// return errors.New("transaction does not exist or is malformed")
+			return fmt.Errorf("transaction %x does not exist or is malformed", input.TxID)
 		}
 
 		input.PubKey = prev.Outputs[input.OutIndex].PubKeyHash

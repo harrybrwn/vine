@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
+	"github.com/harrybrwn/vine/internal/testutil"
 	"github.com/harrybrwn/vine/key"
 	"github.com/harrybrwn/vine/key/wallet"
 )
@@ -35,6 +37,7 @@ func init() {
 	if deterministic {
 		rng = mathrand.New(mathrand.NewSource(13))
 	}
+	testutil.Deterministic = deterministic
 }
 
 type testUser struct {
@@ -51,23 +54,7 @@ func users(n int) []*testUser {
 }
 
 func testWallet(t *testing.T, seed int64) *wallet.Wallet {
-	t.Helper()
-	if !deterministic {
-		// if we are not in deterministic mode,
-		// create a random wallet
-		return wallet.New()
-	}
-	gen := mathrand.New(mathrand.NewSource(seed + 9))
-	key, err := ecdsa.GenerateKey(elliptic.P256(), gen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return wallet.FromKey(key)
-}
-
-type testChain struct {
-	*chain
-	users []*wallet.Wallet
+	return testutil.Wallet(t, seed)
 }
 
 func Test(t *testing.T) {
@@ -89,10 +76,10 @@ func Test(t *testing.T) {
 	user := users(5)
 	c := newChain(user[0])
 	fmt.Printf("%x\n", c.blocks[0].Hash)
-	c.pushblock(&Transaction{
+	c.append(New([]*Transaction{{
 		Inputs:  []*TxInput{{TxID: nil, OutIndex: -1, Signature: nil}},
 		Outputs: []*TxOutput{{Amount: 50, PubKeyHash: user[4].PubKeyHash()}},
-	})
+	}}, c.tophash()))
 	tx := []*Transaction{
 		{
 			Inputs: []*TxInput{{OutIndex: 0, PubKey: user[0].PublicKey()}},
@@ -295,16 +282,6 @@ func TestBasicTransations(t *testing.T) {
 }
 
 func TestTransaction(t *testing.T) {
-	// u := testWallet(t, 1)
-	// rr, ss, _ := ecdsa.Sign(rng, u.PrivateKey(), []byte{})
-	// fmt.Println(rr)
-	// fmt.Println(ss.BitLen() / 8)
-	// fmt.Println(rr.BitLen() + ss.BitLen())
-	// fmt.Println(len(ss.Bytes()))
-	// fmt.Println(ss.Bytes())
-
-	// return
-
 	eq, check := helpers(t)
 	user1, user2, user3 := testWallet(t, 1), testWallet(t, 2), testWallet(t, 3)
 	c := newChain(user1)
@@ -452,7 +429,7 @@ func TestChainStats(t *testing.T) {
 	eq(s.Bal(user1), 90)
 	eq(s.Bal(user2), 10)
 	eq(s.Bal(user3), 0)
-	check(c.prevtx[0].VerifySig(c))
+	c.verifyPrevTxSig(t)
 
 	check(c.pushWithStats(s, []TxDesc{{From: user1, To: user3, Amount: 50}}))
 	eq(s.Bal(user1), 40)
@@ -506,10 +483,9 @@ func TestChainStats(t *testing.T) {
 	eq(s.Bal(user3), 0)
 
 	tx = new(Transaction)
-	check(tx.append(s, TxDesc{From: user1, To: user3, Amount: 1}))
-	check(tx.append(s, TxDesc{From: user2, To: user3, Amount: 2}))
+	check(tx.Append(s, TxDesc{From: user1, To: user3, Amount: 1}))
+	check(tx.Append(s, TxDesc{From: user2, To: user3, Amount: 2}))
 	tx.ID = tx.hash()
-	// fmt.Printf("%x\n", tx.ID)
 	check(tx.Sign(user1.PrivateKey(), c))
 	c.append(New([]*Transaction{tx}, c.tophash()))
 	check(s.Update(tx))
@@ -671,10 +647,22 @@ func buildChainStats(it Iterator) *chainStats {
 }
 
 func (c *chain) addTx(to key.Receiver, from key.Sender, amount uint64) error {
-	tx, err := NewTransaction(
-		c, buildChainStats(c.Iter()),
-		TxDesc{From: from, To: to, Amount: amount},
-	)
+	// tx, err := NewTransaction(
+	// 	c, buildChainStats(c.Iter()),
+	// 	TxDesc{From: from, To: to, Amount: amount},
+	// )
+	stats := buildChainStats(c.Iter())
+	tx, err := createTx(stats, from, []TxDesc{{From: from, To: to, Amount: amount}})
+	if err != nil {
+		return err
+	}
+	err = stats.Update(tx)
+	if err != nil {
+		return err
+	}
+	if err = tx.Sign(from.PrivateKey(), c); err != nil {
+		return err
+	}
 	if err != nil {
 		return err
 	}
@@ -687,10 +675,11 @@ func (c *chain) pushWithStats(stats *chainStats, heads []TxDesc) (err error) {
 		from key.Sender
 		recv []TxDesc
 	}
+	const keylen = 121
 	var (
 		n    = len(heads)
 		txs  = make([]*Transaction, 0, n)
-		recv = make(map[[64]byte]*txReceiver)
+		recv = make(map[[keylen]byte]*txReceiver)
 	)
 	if n == 0 {
 		return errors.New("no transaction can be created with no TxDesc")
@@ -786,8 +775,9 @@ func (c *chain) Head() (*Block, error) {
 	return c.blocks[len(c.blocks)-1], nil
 }
 
-func (c *chain) pushblock(txs ...*Transaction) {
-	c.append(New(txs, c.tophash()))
+func (c *chain) Append(blk *Block) error {
+	c.append(blk)
+	return nil
 }
 
 // Append will add a block to the ledger
@@ -906,7 +896,7 @@ func (dbg chaindebugger) printChain(it Iterator) {
 
 			for i, out := range tx.Outputs {
 				fmt.Fprintf(w, "    Out(")
-				fmt.Fprintf(w, "user: %s, ", dbg.name(out.PubKeyHash))
+				fmt.Fprintf(w, "user: %s, ", dbg.name(out.GetPubKeyHash()))
 				fmt.Fprintf(w, "index: %-d, ", i)
 				fmt.Fprintf(w, "amount: %d, ", out.Amount)
 				fmt.Fprintf(w, "pubhash: %.10x, ", out.PubKeyHash)
@@ -1001,13 +991,21 @@ type address string
 func (a address) Address() string    { return string(a) }
 func (a address) PubKeyHash() []byte { return key.ExtractPubKeyHash(string(a)) }
 
-func privKeyBytes(k key.Sender) [64]byte {
-	var (
-		key  [64]byte
-		priv = k.PrivateKey()
-	)
-
-	copy(key[:32], priv.X.Bytes())
-	copy(key[32:], priv.Y.Bytes())
+func privKeyBytes(k key.Sender) [121]byte {
+	var key [121]byte
+	b, err := x509.MarshalECPrivateKey(k.PrivateKey())
+	if err != nil {
+		panic(err)
+	}
+	copy(key[:], b)
 	return key
+
+	// var (
+	// 	key  [64]byte
+	// 	priv = k.PrivateKey()
+	// )
+
+	// copy(key[:32], priv.X.Bytes())
+	// copy(key[32:], priv.Y.Bytes())
+	// return key
 }

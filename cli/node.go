@@ -107,9 +107,8 @@ func newSendCmd() *cobra.Command {
 			}
 			time.Sleep(time.Millisecond * 250) // wait for discovery
 
-			tx, err := block.NewTransaction(
-				store,
-				block.BuildUTXOSet(store.Iter()), // rebuilds the utxo every time
+			tx := block.NewTransaction()
+			err = tx.Append(block.BuildUTXOSet(store.Iter()),
 				block.TxDesc{
 					From:   w,
 					To:     key.NewReceiver(to),

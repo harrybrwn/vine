@@ -5,9 +5,10 @@ HASH=$(shell cat $(GOFILES) go.mod go.sum | sha256sum | sed -Ee 's/\s|-//g')
 
 DATE=$(shell date -R)
 GOFLAGS=-trimpath       \
+		-buildmode=exe  \
 		-ldflags "-w -s \
 			-X 'github.com/harrybrwn/vine/cli.version=$(VERSION)' \
-			-X 'github.com/harrybrwn/vine/cli.built=$(DATE)'      \
+			-X 'github.com/harrybrwn/vine/cli.date=$(DATE)'       \
 			-X 'github.com/harrybrwn/vine/cli.commit=$(COMMIT)'   \
 			-X 'github.com/harrybrwn/vine/cli.hash=$(HASH)'"
 GOOS ?= $(shell go env GOOS)
@@ -17,9 +18,15 @@ GOARCH ?= $(shell go env GOARCH)
 BINDIR=$$GOPATH/bin
 
 GEN=block/block.pb.go node/node.pb.go
+#t:
+#	file ./vine-$(VERSION).deb
 
 vine: $(GEN)
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) ./cmd/vine
+
+./bin/vine: $(GEN)
+	@#mkdir ./bin
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) -o $@ ./cmd/vine
 
 install: vine
 	@install ./vine $(BINDIR)
@@ -29,9 +36,9 @@ uninstall: $(GEN)
 	sudo rm $(BINDIR)/vine
 
 systemd:
-	systemctl --user disable --now blk-ledger
-	cp systemd/blk-ledger.service ~/.config/systemd/user
-	systemctl --user enable --now blk-ledger
+	systemctl --user disable --now vine
+	cp systemd/vine.service ~/.config/systemd/user
+	systemctl --user enable --now vine
 
 gen: $(GEN)
 	go generate ./block ./node
@@ -43,7 +50,7 @@ block/%.pb.go:
 	go generate ./block
 
 clean:
-	$(RM) -r ./build ./dist ./vine ./vine.exe
+	$(RM) -r ./build ./bin ./dist ./vine ./vine.exe vine-$(VERSION).deb
 	go clean -i ./cmd/vine
 
 cleanpb:
@@ -57,3 +64,11 @@ systemd-logs:
 hash:
 	@cat $(GOFILES) go.mod go.sum | sha256sum | sed -Ee 's/[\s-]+//g'
 
+deb: vine-$(VERSION).deb
+vine-$(VERSION).deb: scripts/deb.sh
+	sh scripts/deb.sh vine-$(VERSION)
+
+install-deb: vine-$(VERSION).deb
+	sudo apt install -f ./$<
+
+.PHONY: install-deb deb

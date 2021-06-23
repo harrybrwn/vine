@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/harrybrwn/config"
+	"github.com/harrybrwn/mdns"
 	"github.com/harrybrwn/vine/internal"
 	"github.com/harrybrwn/vine/internal/logging"
 	"github.com/harrybrwn/vine/key/wallet"
-	"github.com/harrybrwn/mdns"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -156,7 +156,7 @@ risk, as of 2020 there is a high risk of being overpowered by a
 
 var (
 	version = "dev"
-	built   string
+	date    string
 	commit  string
 	hash    string
 )
@@ -173,9 +173,11 @@ func newVersionCmd() *cobra.Command {
 				return nil
 			}
 			cmd.Printf("%s version %s\n", root.Name(), version)
-			cmd.Printf("built:  %s\n", built)
+			cmd.Printf("date:   %s\n", date)
 			cmd.Printf("commit: %s\n", commit)
-			cmd.Printf("hash:   %s\n", hash)
+			if hash != "" {
+				cmd.Printf("hash:   %s\n", hash)
+			}
 			return nil
 		},
 	}

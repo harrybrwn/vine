@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"strconv"
 
 	"github.com/harrybrwn/vine/key"
 	"github.com/libp2p/go-libp2p-core/crypto"
@@ -138,16 +139,17 @@ func (w *Wallet) WriteTo(wr io.Writer) (int64, error) {
 		return 0, err
 	}
 	return 1, pem.Encode(wr, &pem.Block{
-		Type:    "private key",
-		Bytes:   enc,
-		Headers: map[string]string{"version": string([]byte{w.version})},
+		Type:  "private-key",
+		Bytes: enc,
+		Headers: map[string]string{
+			"version": strconv.FormatUint(uint64(w.version), 16)},
 	})
 }
 
 // ReadFrom will populate the wallet data by reading from an io.Reader
 func (w *Wallet) ReadFrom(r io.Reader) (int64, error) {
 	var buf bytes.Buffer
-	_, err := buf.ReadFrom(r)
+	n, err := buf.ReadFrom(r)
 	if err != nil {
 		return 0, err
 	}
@@ -164,11 +166,15 @@ func (w *Wallet) ReadFrom(r io.Reader) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	vStr, ok := block.Headers["version"]
-	if ok && len(vStr) > 0 {
-		w.version = vStr[0]
+	v, ok := block.Headers["version"]
+	if ok && len(v) > 0 {
+		version, err := strconv.ParseUint(v, 16, 8)
+		if err != nil {
+			return 0, err
+		}
+		w.version = byte(version)
 	}
-	return 1, nil
+	return n, nil
 }
 
 func checksum(b []byte) []byte {
