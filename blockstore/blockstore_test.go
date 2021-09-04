@@ -20,6 +20,7 @@ import (
 func init() { logrus.SetLevel(logrus.ErrorLevel) }
 
 func TestNewBlockStore(t *testing.T) {
+	t.Parallel()
 	store, dir, err := testStore(10, t)
 	defer func() {
 		store.Close()
@@ -59,15 +60,13 @@ func TestNewBlockStore(t *testing.T) {
 }
 
 func TestBlockIter(t *testing.T) {
+	t.Parallel()
 	store, dir, err := testStore(10, t)
 	if err != nil {
 		t.Error(err)
 	}
 	defer os.RemoveAll(dir)
 	iter := store.Iter()
-	if err != nil {
-		t.Error(err)
-	}
 	if iter == nil {
 		t.Fatal("iterator should not be nil")
 	}
@@ -80,7 +79,7 @@ func TestBlockIter(t *testing.T) {
 		if b == nil {
 			break
 		}
-		if bytes.Compare(b.Hash, last) != 0 {
+		if !bytes.Equal(b.Hash, last) {
 			t.Error("invalid hash")
 		}
 		if !block.IsGenisis(b) && !block.HasDoneWork(b) {
@@ -94,6 +93,29 @@ func TestBlockIter(t *testing.T) {
 		}
 		if !block.IsGenisis(b) && !block.HasDoneWork(b) {
 			t.Error("should have done PoW")
+		}
+	}
+}
+
+func TestReverseIter(t *testing.T) {
+	t.Parallel()
+	store, dir, err := testStore(10, t)
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(dir)
+	iter := store.Rev()
+	if iter == nil {
+		t.Fatal("got nil iterator")
+	}
+	var b *block.Block
+	for {
+		b = iter.Next()
+		if b == nil {
+			break
+		}
+		if b.Hash == nil {
+			t.Error("failed dummy check: nil hash")
 		}
 	}
 }
@@ -148,7 +170,7 @@ func testStore(n int, t *testing.T) (*BlockStore, string, error) {
 		n = 10
 	}
 	dir := tempdir()
-	store, err := New(addr("tester"), dir)
+	store, err := New(addr("tester"), t.TempDir())
 	if err != nil {
 		t.Error(err)
 		return nil, dir, err

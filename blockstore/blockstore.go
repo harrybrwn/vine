@@ -13,10 +13,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+//go:generate protoc -I../protobuf -I.. --go_out=paths=source_relative:. ../protobuf/blockfile.proto
+
 var (
-	headKey     = []byte("head")
-	blockPrefix = []byte("_block")
-	txPrefix    = []byte("_tx")
+	headKey       = []byte("head")
+	tailKey       = []byte("tail")
+	blockPrefix   = []byte("_block")
+	txPrefix      = []byte("_tx")
+	reversePrefix = []byte("_rev")
 )
 
 // CreateEmpty creates a new database file
@@ -67,7 +71,11 @@ func Open(dir string, options ...Opt) (*BlockStore, error) {
 		db.Close()
 		return nil, err
 	}
-	return &BlockStore{db: db, head: head, opts: &opts}, nil
+	return &BlockStore{
+		db:   db,
+		head: head,
+		opts: &opts,
+	}, nil
 }
 
 // New creates a new BlockStore
@@ -88,20 +96,27 @@ func New(address key.Address, dir string) (*BlockStore, error) {
 		// hash pointed to by the "head" key.
 		if err == badger.ErrKeyNotFound {
 			genisis := block.Genisis(block.Coinbase(address))
-
-			rawBlock, err := proto.Marshal(genisis)
-			if err != nil {
-				return errors.WithStack(err)
-			}
 			store.head = genisis.Hash
-			return txn.Set(withBlockPrefix(genisis.Hash), rawBlock)
+			store.tail = genisis.Hash
+			return store.pushBlock(genisis, txn)
 		}
 
 		if err != nil {
 			return err
 		}
-		return item.Value(func(val []byte) error {
+		err = item.Value(func(val []byte) error {
 			store.head = val
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		item, err = txn.Get(tailKey)
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			store.tail = val
 			return nil
 		})
 	})
@@ -112,6 +127,7 @@ func New(address key.Address, dir string) (*BlockStore, error) {
 type BlockStore struct {
 	db   *badger.DB
 	head []byte
+	tail []byte
 	opts *badger.Options
 }
 
@@ -141,11 +157,16 @@ func (bs *BlockStore) pushBlock(blk *block.Block, txn *badger.Txn) error {
 	if !block.HasDoneWork(blk) {
 		return block.ErrBlockNotMined
 	}
+	err := txn.Set(reversed(blk.PrevHash), blk.Hash)
+	if err != nil {
+		return err
+	}
 	raw, err := proto.Marshal(blk)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	err = txn.Set(withBlockPrefix(blk.Hash), raw)
+	blockhash := withBlockPrefix(blk.Hash)
+	err = txn.Set(blockhash, raw)
 	if err == nil {
 		bs.head = blk.Hash
 	}
@@ -155,7 +176,12 @@ func (bs *BlockStore) pushBlock(blk *block.Block, txn *badger.Txn) error {
 // Close will close the block store
 func (bs *BlockStore) Close() (err error) {
 	if err = bs.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(headKey, bs.head)
+		err := txn.Set(headKey, bs.head)
+		if err != nil {
+			return err
+		}
+		err = txn.Set(tailKey, bs.tail)
+		return err
 	}); err != nil {
 		return err
 	}
@@ -276,12 +302,32 @@ func initBlock(txn *badger.Txn, key []byte, b *block.Block) error {
 	})
 }
 
+func getNextReverseIterKey(txn *badger.Txn, key []byte) ([]byte, error) {
+	item, err := txn.Get(reversed(key))
+	if err != nil {
+		return nil, err
+	}
+	var next []byte
+	err = item.Value(func(val []byte) error {
+		next = val
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return next, nil
+}
+
 func withBlockPrefix(key []byte) []byte {
 	return bytes.Join([][]byte{blockPrefix, key}, nil)
 }
 
 func withTxPrefix(key []byte) []byte {
 	return bytes.Join([][]byte{txPrefix, key}, nil)
+}
+
+func reversed(key []byte) []byte {
+	return bytes.Join([][]byte{reversePrefix, key}, nil)
 }
 
 var (
