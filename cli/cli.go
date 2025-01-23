@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	stdlog "log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/harrybrwn/vine/internal"
 	"github.com/harrybrwn/vine/internal/logging"
 	"github.com/harrybrwn/vine/key/wallet"
+	_ "github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -34,10 +34,22 @@ type Config struct {
 	NoColor  bool   `yaml:"nocolor"`
 
 	// Config is the config directory used for the cli
-	Config string `yaml:"config" env:"VINE_CONFIG"`
+	ConfigDir string `yaml:"config" env:"VINE_CONFIG"`
 
 	// Data directory (defaults to the same as the config dir)
 	Data string `yaml:"data"`
+}
+
+func (c *Config) SetConfigDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		dir = filepath.Join(cwd, dir)
+	}
+	c.ConfigDir = dir
+	return nil
 }
 
 // GlobalFlags are the cli's global persisant flags
@@ -51,32 +63,14 @@ var Flags GlobalFlags
 
 // New returns a new 'vine' root command
 func New() *cobra.Command {
-	config.AddPath("$VINE_CONFIG")
-	config.SetFilename("config.yml")
-	config.SetType("yaml")
-
 	conf := &Config{}
 	config.SetConfig(conf)
+	config.SetType("yaml")
 	log.SetReportCaller(false)
 
-	if conf.Config != "" {
-		config.AddPath(conf.Config)
-	}
-	config.AddUserConfigDir("vine")
 	config.InitDefaults()
-
-	dir := config.DirUsed()
-	err := config.ReadConfigFile()
-	if err == config.ErrNoConfigFile {
-		if err = mkdir(dir); err != nil {
-			log.WithError(err).Errorf("could not create config directory '%s'", config.DirUsed())
-		}
-		f, e := os.OpenFile(config.FileUsed(), os.O_CREATE, 0600)
-		f.Close()
-		err = e
-	}
-	if config.IsEmpty("config") {
-		conf.Config = dir
+	if conf.ConfigDir != "" {
+		config.AddPath(conf.ConfigDir)
 	}
 
 	var (
@@ -107,10 +101,21 @@ risk, as of 2020 there is a high risk of being overpowered by a
 				conf.LogLevel = "trace"
 			}
 			if configdir != "" {
-				conf.Config = configdir
-				config.ReadConfigFromFile(filepath.Join(configdir, "config.yml"))
+				config.AddPath(configdir)
+				conf.SetConfigDir(configdir)
+			} else {
+				config.AddUserConfigDir("vine")
+				paths := config.PathsUsed()
+				if len(paths) > 0 {
+					conf.ConfigDir = paths[0]
+				}
 			}
-			return cliPreRun(conf, &Flags, &configdir)(cmd, args)
+			config.AddFile("config.yml")
+			err := config.ReadConfig()
+			if err != nil {
+				log.WithError(err).Warn("could not read config file")
+			}
+			return cliPreRun(conf, &Flags)(cmd, args)
 		},
 	}
 
@@ -132,10 +137,14 @@ risk, as of 2020 there is a high risk of being overpowered by a
 	) ([]string, cobra.ShellCompDirective) {
 		return allLogLevels, cobra.ShellCompDirectiveNoSpace
 	})
-
 	c.SetHelpTemplate(config.IndentedCobraHelpTemplate)
+	confcmd := config.NewConfigCommand()
+	confcmd.Flags().BoolP("edit", "e", false, "edit the config file")
+	confcmd.Flags().BoolP("file", "f", false, "print the config files being used")
+	confcmd.Flags().BoolP("dir", "d", false, "print the config directories being used")
+	confcmd.Flags().Bool("list-all", false, "list all possible config files whether they exist or not")
 	c.AddCommand(
-		newConfigCmd(),
+		confcmd,
 		newVersionCmd(),
 		logging.NewLogCmd(LogFile),
 		newCompletionCmd(),
@@ -149,7 +158,7 @@ risk, as of 2020 there is a high risk of being overpowered by a
 		newPeersCmd(),
 		newRPCCmd(),
 
-		newTestCmd(),
+		newTestCmd(conf),
 	)
 	return c
 }
@@ -203,17 +212,14 @@ var LogFile = &lumberjack.Logger{
 	Compress:   false,
 }
 
-func cliPreRun(conf *Config, globals *GlobalFlags, dir *string) func(*cobra.Command, []string) error {
+func cliPreRun(conf *Config, globals *GlobalFlags) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		if (*dir) != "" {
-			conf.Config = *dir
-		}
 		if globals.Silent {
 			globals.mdnslog = false
 		}
 
 		// Set the actual filename
-		LogFile.Filename = filepath.Join(conf.Config, "debug.log")
+		LogFile.Filename = filepath.Join(conf.ConfigDir, "debug.log")
 		var format log.Formatter = &log.TextFormatter{
 			ForceColors:            !conf.NoColor,
 			DisableColors:          conf.NoColor,
@@ -328,67 +334,6 @@ func newWalletCmd() *cobra.Command {
 			return nil
 		},
 	})
-	return c
-}
-
-func newConfigCmd() *cobra.Command {
-	var edit, file, dir bool
-	c := &cobra.Command{
-		Use:     "config",
-		Short:   "Manage program configuration",
-		Aliases: []string{"conf"},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			confdir := config.GetString("config")
-			var f string
-			if confdir == "" {
-				f = config.FileUsed()
-			} else {
-				f = filepath.Join(confdir, "config.yml")
-			}
-			if file {
-				fmt.Println(f)
-				return nil
-			}
-			if dir {
-				if confdir == "" {
-					fmt.Println(config.DirUsed())
-				} else {
-					fmt.Println(confdir)
-				}
-				return nil
-			}
-
-			if edit {
-				if f == "" {
-					return errors.New("no config file")
-				}
-				editor := config.GetString("editor")
-				if editor == "" {
-					return errors.New("no editor set (see $EDITOR)")
-				}
-				ex := exec.Command(editor, f)
-				ex.Stdout = cmd.OutOrStdout()
-				ex.Stderr = cmd.ErrOrStderr()
-				ex.Stdin = cmd.InOrStdin()
-				return ex.Run()
-			}
-			return cmd.Help()
-		},
-	}
-
-	c.AddCommand(&cobra.Command{
-		Use:   "get",
-		Short: "Get a config variable",
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, arg := range args {
-				cmd.Println(config.Get(arg))
-			}
-		},
-	})
-	flags := c.Flags()
-	flags.BoolVarP(&edit, "edit", "e", edit, "edit the configuration file")
-	flags.BoolVarP(&file, "file", "f", file, "print the filepath of the configuration file")
-	flags.BoolVarP(&dir, "dir", "d", dir, "print the path of the configuration folder")
 	return c
 }
 

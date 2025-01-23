@@ -1,0 +1,14 @@
+# Build
+/bin/
+/build/
+/dist/
+/notes/
+*.deb
+**/*.pb.go
+
+# Config
+/.vscode/
+
+# Misc
+*.mp4
+*.pdf

@@ -12,7 +12,7 @@ import (
 	"github.com/harrybrwn/vine/key/wallet"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr-net"
+	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/nsf/termbox-go"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -54,12 +54,14 @@ func configDir() string {
 }
 
 func blocksDir() string {
-	const name = "blocks"
 	dir, err := config.GetStringErr("data")
-	if err == nil && dir != "" {
+	if err != nil {
+		dir = "blocks"
+	}
+	if filepath.IsAbs(dir) {
 		return dir
 	}
-	return filepath.Join(config.GetString("config"), name)
+	return filepath.Join(config.GetString("config"), dir)
 }
 
 func cryptoPrivKey(k *ecdsa.PrivateKey) crypto.PrivKey {

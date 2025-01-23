@@ -43,7 +43,7 @@ func newChainCmd() *cobra.Command {
 					break
 				}
 			}
-			b, err = json.MarshalIndent(blocks, "  ", "  ")
+			b, err = json.MarshalIndent(blocks, "", "    ")
 			if err != nil {
 				return err
 			}

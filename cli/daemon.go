@@ -159,12 +159,9 @@ func runDaemon(hooks ...daemonHook) error {
 
 	srv := grpc.NewServer()
 	node.RegisterBlockStoreServer(srv, fullnode)
-	err = fullnode.StartWithGRPC(srv, node.GRPCProto)
-	if err == context.Canceled {
-		return nil
-	} else if err != nil {
-		return err
-	}
+	l := node.NewGRPCStreamListener(ctx, host, node.GRPCProto)
+	go srv.Serve(l)
+	fullnode.Start()
 
 	for _, h := range hooks {
 		go h(ctx, host, stop)
@@ -325,4 +322,9 @@ func events(ctx context.Context, host host.Host, cancel func()) {
 			return
 		}
 	}
+}
+
+type localCommandServer struct {
+	// node.LocalCommandsServer
+	store *blockstore.BlockStore
 }

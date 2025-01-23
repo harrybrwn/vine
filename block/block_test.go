@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	mathrand "math/rand"
 	"os"
 	"reflect"
@@ -70,7 +69,7 @@ func Test(t *testing.T) {
 	fmt.Printf("nonce:      %d\n", b.Nonce)
 	fmt.Printf("hash:       %#v\n", b.Hash)
 	gen := DefaultGenesis()
-	fmt.Println("reproducible:", bytes.Compare(b.Hash, gen.Hash) == 0 && b.Nonce == gen.Nonce)
+	fmt.Println("reproducible:", bytes.Equal(b.Hash, gen.Hash) && b.Nonce == gen.Nonce)
 	fmt.Println("is default genesis block:", IsDefaultGenesis(b))
 
 	user := users(5)
@@ -117,7 +116,7 @@ func TestBlock(t *testing.T) {
 	for i := 0; i < len(c.blocks)-1; i++ {
 		b := c.blocks[i]
 		next := c.blocks[i+1]
-		if bytes.Compare(b.Hash, next.PrevHash) != 0 {
+		if !bytes.Equal(b.Hash, next.PrevHash) {
 			t.Errorf(
 				"invalid hash links between blocks %d (%x) and %d (%x)",
 				i, c.blocks[i].Hash, i+1, c.blocks[i+1].PrevHash)
@@ -139,7 +138,7 @@ func TestPOW(t *testing.T) {
 	if len(hash) != 32 {
 		t.Error("hash should be 32 bytes long")
 	}
-	if bytes.Compare(hash, hashBlock(difficulty, 0, block)) == 0 {
+	if bytes.Equal(hash, hashBlock(difficulty, 0, block)) {
 		t.Error("PoW hash ignored the nonce")
 	}
 	b := block
@@ -202,20 +201,20 @@ func TestMerkleTree(t *testing.T) {
 		h([]byte("four")),
 		h([]byte("five")),
 	}, sha256.New())
-	if bytes.Compare(res, expected) != 0 {
+	if !bytes.Equal(res, expected) {
 		t.Error("wrong merkle root computed")
 	}
 
 	root = merkleroot([][]byte{sh("a"), sh("b")}, sha256.New())
 	res = h(join(sh("a"), sh("b")))
 
-	if bytes.Compare(root, res) != 0 {
+	if !bytes.Equal(root, res) {
 		t.Error("wrong result")
 	}
 
 	root = merkleroot([][]byte{sh("test")}, sha256.New())
 	res = sh("test")
-	if bytes.Compare(root, res) != 0 {
+	if !bytes.Equal(root, res) {
 		t.Error("wrong result")
 	}
 }
@@ -501,11 +500,6 @@ func TestChainStats(t *testing.T) {
 	eq(s.Bal(user3), 3)
 }
 
-func randint(max int64) int64 {
-	i, _ := rand.Int(rand.Reader, big.NewInt(max))
-	return i.Int64()
-}
-
 func TestLarge(t *testing.T) {
 	eq, check := helpers(t)
 	eq(1, 1)
@@ -692,7 +686,7 @@ func (c *chain) pushWithStats(stats *chainStats, heads []TxDesc) (err error) {
 		k := privKeyBytes(head.From)
 		if _, ok := recv[k]; ok {
 			priv := privKeyBytes(recv[k].from)
-			if bytes.Compare(priv[:], k[:]) != 0 {
+			if !bytes.Equal(priv[:], k[:]) {
 				panic("keys don't match")
 			}
 			recv[k].recv = append(recv[k].recv, TxDesc{
@@ -764,7 +758,7 @@ func (c *chain) push(heads []TxDesc) (err error) {
 // Get will get a block given it's hash
 func (c *chain) Get(h []byte) (*Block, error) {
 	for _, blk := range c.blocks {
-		if bytes.Compare(h, blk.Hash) == 0 {
+		if bytes.Equal(h, blk.Hash) {
 			return blk, nil
 		}
 	}
@@ -878,7 +872,6 @@ func (dbg chaindebugger) printChain(it Iterator) {
 		for _, tx := range blk.Transactions {
 			fmt.Fprintf(w, "  TX(%.10x)\n", tx.ID)
 			fmt.Fprintf(w, "    lock: %v,\n", ptypes.TimestampString(tx.Lock))
-			const trunc = 10
 			for _, in := range tx.Inputs {
 				fmt.Fprintf(w, "    In(")
 				var hash []byte = nil
@@ -909,10 +902,6 @@ func (dbg chaindebugger) printChain(it Iterator) {
 		}
 	}
 	fmt.Fprintf(w, "End Chain")
-}
-
-func (dbg chaindebugger) inputStr(in *TxInput) string {
-	return fmt.Sprintf("In(tx: %.10x, ", in.TxID)
 }
 
 func (dbg chaindebugger) name(pubkeyhash []byte) string {
@@ -948,14 +937,14 @@ func TestProto(t *testing.T) {
 	if len(block.Hash) != 32 {
 		t.Error("wrong hash length")
 	}
-	if bytes.Compare(b.Hash, block.Hash) != 0 {
+	if !bytes.Equal(b.Hash, block.Hash) {
 		t.Error("decoded with wrong hash")
 	}
 	b.Transactions[0].ID = []byte("changing the tx")
 
 	// just making sure its a deep copy lol
 	blockCp := proto.Clone(block).(*Block)
-	if bytes.Compare(b.Hash, blockCp.Hash) != 0 {
+	if !bytes.Equal(b.Hash, blockCp.Hash) {
 		t.Error("decoded with wrong hash")
 	}
 	if string(blockCp.Transactions[0].ID) != "testTX" {

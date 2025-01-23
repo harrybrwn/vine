@@ -142,7 +142,7 @@ func (sts *chainStats) markSpent(txid []byte, index int, pubkey []byte) {
 	// update the utxo set by checking if the output being marked as
 	// spent is in it and removing it then updating the balance set
 	for i, utxo := range sts.utxo[userkey] {
-		if utxo.index == int(index) && bytes.Compare(utxo.txid, txid) == 0 {
+		if utxo.index == int(index) && bytes.Equal(utxo.txid, txid) {
 			// update balance and remove from list of UTXOs
 			sts.balances[userkey] -= utxo.Amount
 			unspent = remove(unspent, i)
@@ -241,6 +241,6 @@ Outer:
 func utxoEq(a, b *UTXO) bool {
 	return a.index == b.index &&
 		a.Amount == b.Amount &&
-		bytes.Compare(a.txid, b.txid) == 0 &&
-		bytes.Compare(a.PubKeyHash, b.PubKeyHash) == 0
+		bytes.Equal(a.txid, b.txid) &&
+		bytes.Equal(a.PubKeyHash, b.PubKeyHash)
 }

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package node;
+
+option go_package = "github.com/harrybrwn/vine/node;node";
+
+import "node.proto";
+
+service LocalCommands {
+	rpc chain(Empty) returns (stream BlockMsg) {}
+}

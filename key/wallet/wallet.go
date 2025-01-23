@@ -229,7 +229,4 @@ func (w *Wallet) Equals(k crypto.Key) bool {
 	return w.privKey().Equals(k)
 }
 
-// Bytes get gets the raw bytes of the key
-func (w *Wallet) Bytes() ([]byte, error) {
-	return w.privKey().Bytes()
-}
+func (w *Wallet) Bytes() ([]byte, error) { return w.Raw() }

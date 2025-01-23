@@ -1,6 +1,7 @@
 package node
 
 //go:generate protoc -I../protobuf -I.. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. ../protobuf/node.proto
+// [disable] go : generate protoc -I../protobuf -I.. --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. ../protobuf/local.proto
 
 import (
 	"context"
@@ -59,7 +60,7 @@ type Node struct {
 
 // New will create a partial node
 func New(ctx context.Context, host host.Host) (*Node, error) {
-	ctx, stop := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	disc := p2p.Discovery{
 		Host:     host,
 		Service:  DiscoveryTag,
@@ -67,15 +68,15 @@ func New(ctx context.Context, host host.Host) (*Node, error) {
 	}
 	ch, err := disc.StartContext(ctx)
 	if err != nil {
-		stop()
+		cancel()
 		return nil, err
 	}
 	n := &Node{
 		host:     host,
 		ctx:      ctx,
+		cancel:   cancel,
 		newPeers: ch,
 		errs:     make(chan error),
-		cancel:   stop,
 		store:    nil,
 	}
 	return n, nil
@@ -88,7 +89,11 @@ type blockStoreTxdb interface {
 }
 
 // FullNode will run a full node
-func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node, error) {
+func FullNode(
+	ctx context.Context,
+	host host.Host,
+	store blockStoreTxdb,
+) (*Node, error) {
 	ctx, stop := context.WithCancel(ctx)
 	discovery := p2p.Discovery{
 		Host:     host,
@@ -100,6 +105,7 @@ func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node,
 		stop()
 		return nil, err
 	}
+
 	n := &Node{
 		host:     host,
 		ctx:      ctx,
@@ -109,64 +115,7 @@ func FullNode(ctx context.Context, host host.Host, store blockStoreTxdb) (*Node,
 		cancel:   stop,
 		errs:     make(chan error),
 	}
-
-	host.SetStreamHandlerMatch(
-		"/vine/head", regex(`^(/test|/protobuf|/proto|/json)?/vine/head$`),
-		func(s network.Stream) {
-			defer s.Close()
-			// response for nodes getting the first block
-			parts := strings.Split(string(s.Protocol()), "/")
-			protocol := parts[1]
-
-			blk, err := n.store.Head()
-			if err != nil {
-				log.WithError(err).Debug("could not respond with head block")
-				sendError(s, err)
-				return
-			}
-			log.WithField("protocol", protocol).Trace("got head block")
-
-			err = sendBlock(protocol, blk, s)
-			if err != nil {
-				log.WithError(err).Debug("could not send block through network")
-				sendError(s, err)
-				return
-			}
-		},
-	)
-
-	host.SetStreamHandlerMatch(
-		"/vine/test", regex(`^/vine/test(/[A-Za-z]+)?$`),
-		func(s network.Stream) {
-			s.Write([]byte("testing testing 123"))
-			s.Close()
-		},
-	)
-
-	host.SetStreamHandlerMatch(
-		"/vine/block",
-		regex(`^/vine/block/.{65}?$`),
-		n.handleBlockStreamReq,
-	)
-
-	host.SetStreamHandler(
-		"/vine/chain",
-		func(s network.Stream) {
-			defer s.Close()
-			err = sendChain(s, store)
-			if err != nil {
-				log.WithError(err).Error("could not marshal chain into json")
-			}
-		},
-	)
-
-	// listen for new transactions
-	host.SetStreamHandler("/vine/tx", func(s network.Stream) {
-		log.WithFields(log.Fields{
-			"proto": s.Protocol(),
-		}).Info("tx received")
-	})
-
+	n.setupStreamHandlers()
 	return n, nil
 }
 
@@ -225,15 +174,13 @@ func (n *Node) Peers() peer.IDSlice {
 // PeerAddrs will iterate through the node's peers and
 // collect their addresses.
 func (n *Node) PeerAddrs() []multiaddr.Multiaddr {
-	hostid := n.host.ID()
+	hostID := n.host.ID()
 	addrs := make([]multiaddr.Multiaddr, 0)
 	for _, id := range n.host.Peerstore().PeersWithAddrs() {
-		if id == hostid {
+		if id == hostID {
 			continue
 		}
-		for _, a := range n.host.Peerstore().Addrs(id) {
-			addrs = append(addrs, a)
-		}
+		addrs = append(addrs, n.host.Peerstore().Addrs(id)...)
 	}
 	return addrs
 }
@@ -244,22 +191,47 @@ func (n *Node) GetHeadBlock() (*block.Block, error) {
 		grpc.WithInsecure(),
 		grpc.WithContextDialer(GRPCDialer(n.host, GRPCProto)),
 	}
+	ch := make(chan *block.Block)
+	errs := make(chan error)
 	ctx, cancel := context.WithCancel(n.ctx)
-	defer cancel()
-	for _, p := range n.Peers() {
-		conn, err := grpc.DialContext(ctx, p.Pretty(), opts...)
-		if err != nil {
-			log.Warning(err)
-			continue
+	defer func() {
+		cancel()
+		close(errs)
+	}()
+
+	go func() {
+		defer close(ch)
+		// Dial all peers and return the first response while
+		// canceling all other requests
+		for _, p := range n.Peers() {
+			go func(p peer.ID) {
+				conn, err := grpc.DialContext(ctx, p.Pretty(), opts...)
+				if err != nil {
+					log.Warning(err)
+					errs <- err
+					return
+					// continue
+				}
+				client := NewBlockStoreClient(conn)
+				msg, err := client.Head(ctx, &Empty{})
+				if err != nil {
+					// continue
+					log.Warning(err)
+					errs <- err
+					return
+				}
+				ch <- msg.Block
+				errs <- nil
+			}(p)
+			// return msg.Block, nil
 		}
-		client := NewBlockStoreClient(conn)
-		msg, err := client.Head(ctx, &Empty{})
-		if err != nil {
-			continue
-		}
-		return msg.Block, nil
+	}()
+	blk := <-ch
+	if blk == nil {
+		return nil, <-errs
 	}
-	return nil, errors.New("did not find head block")
+	return <-ch, <-errs
+	// return nil, errors.New("did not find head block")
 }
 
 // BroadcastTx will broadcast a transaction to all the node's peers
@@ -318,6 +290,66 @@ func (n *Node) discover() {
 			log.WithError(err).Warn("could not emit connected event")
 		}
 	}
+}
+
+func (n *Node) setupStreamHandlers() {
+	n.host.SetStreamHandlerMatch(
+		"/vine/head", regex(`^(/test|/protobuf|/proto|/json)?/vine/head$`),
+		func(s network.Stream) {
+			log.Info("/vine/head stream handler executing")
+			defer s.Close()
+			// response for nodes getting the first block
+			parts := strings.Split(string(s.Protocol()), "/")
+			protocol := parts[1]
+
+			blk, err := n.store.Head()
+			if err != nil {
+				log.WithError(err).Debug("could not respond with head block")
+				sendError(s, err)
+				return
+			}
+			log.WithField("protocol", protocol).Trace("got head block")
+
+			err = sendBlock(protocol, blk, s)
+			if err != nil {
+				log.WithError(err).Debug("could not send block through network")
+				sendError(s, err)
+				return
+			}
+		},
+	)
+
+	n.host.SetStreamHandlerMatch(
+		"/vine/test", regex(`^/vine/test(/[A-Za-z]+)?$`),
+		func(s network.Stream) {
+			s.Write([]byte("testing testing 123"))
+			s.Close()
+		},
+	)
+
+	n.host.SetStreamHandlerMatch(
+		"/vine/block",
+		regex(`^/vine/block/.{65}?$`),
+		n.handleBlockStreamReq,
+	)
+
+	n.host.SetStreamHandler(
+		"/vine/chain",
+		func(s network.Stream) {
+			defer s.Close()
+			err := sendChain(s, n.store)
+			if err != nil {
+				log.WithError(err).Error("could not marshal chain into json")
+			}
+		},
+	)
+
+	// listen for new transactions
+	n.host.SetStreamHandler("/vine/tx", func(s network.Stream) {
+		log.WithFields(log.Fields{
+			"proto": s.Protocol(),
+		}).Info("tx received")
+	})
 }
 
 func (n *Node) handleBlockStreamReq(s network.Stream) {

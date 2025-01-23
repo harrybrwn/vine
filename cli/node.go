@@ -21,6 +21,7 @@ import (
 	"github.com/harrybrwn/vine/p2p"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/pkg/errors"
@@ -298,6 +299,38 @@ func newRPCCmd() *cobra.Command {
 		newRPCBaseCmd(),
 		newRPCBlockCmd(),
 		newRPCTxCmd(),
+		&cobra.Command{
+			Use: "test",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ctx, cancel := context.WithCancel(cmd.Context())
+				defer cancel()
+				host, err := newhost(ctx)
+				if err != nil {
+					return err
+				}
+				defer host.Close()
+				ch, err := (&p2p.Discovery{
+					Host:     host,
+					Service:  node.DiscoveryTag,
+					Duration: node.DiscoveryTime,
+				}).StartContext(ctx)
+				if err != nil {
+					return nil
+				}
+				for addr := range ch {
+					if addr.ID == host.ID() || host.Network().Connectedness(addr.ID) == network.Connected {
+						continue
+					}
+					err = host.Connect(ctx, addr)
+					if err != nil {
+						return err
+					}
+					conns := host.Network().ConnsToPeer(addr.ID)
+					fmt.Println(addr.ID, conns)
+				}
+				return nil
+			},
+		},
 	)
 	return c
 }
@@ -497,11 +530,14 @@ func newRPCTxCmd() *cobra.Command {
 	return c
 }
 
-func newTestCmd() *cobra.Command {
+func newTestCmd(conf *Config) *cobra.Command {
 	c := &cobra.Command{
 		Use:    "test",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println(config.GetString("config"))
+			fmt.Println(config.GetString("ConfigDir"))
+			fmt.Printf("%+v\n", conf)
 			return nil
 		},
 	}

@@ -8,8 +8,12 @@ import (
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/protocol"
-	manet "github.com/multiformats/go-multiaddr-net"
+	manet "github.com/multiformats/go-multiaddr/net"
 )
+
+func NewGRPCStreamListener(ctx context.Context, h host.Host, proto protocol.ID) net.Listener {
+	return newStreamListener(ctx, h, proto)
+}
 
 func newStreamListener(ctx context.Context, h host.Host, proto protocol.ID) *streamListener {
 	ctx, cancel := context.WithCancel(ctx)
@@ -70,6 +74,7 @@ func (sl *streamListener) Accept() (net.Conn, error) {
 }
 
 func (sl *streamListener) Close() error {
+	sl.cancel()
 	return sl.host.Close()
 }
 

@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/harrybrwn/mdns"
 	"github.com/harrybrwn/vine/block"
 	"github.com/harrybrwn/vine/blockstore"
 	"github.com/harrybrwn/vine/internal/mockblock"
 	"github.com/harrybrwn/vine/key/wallet"
-	"github.com/harrybrwn/mdns"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
-	manet "github.com/multiformats/go-multiaddr-net"
+	manet "github.com/multiformats/go-multiaddr/net"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )

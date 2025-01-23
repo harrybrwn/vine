@@ -15,7 +15,7 @@ GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 
 #BINDIR=/usr/local/bin
-BINDIR=$$GOPATH/bin
+BINDIR ?= $$GOPATH/bin
 
 GEN=block/block.pb.go node/node.pb.go
 #t:
@@ -25,12 +25,11 @@ vine: $(GEN)
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) ./cmd/vine
 
 ./bin/vine: $(GEN)
-	@#mkdir ./bin
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) -o $@ ./cmd/vine
 
-install: vine
-	@install ./vine $(BINDIR)
-	@rm ./vine
+install: ./bin/vine
+	install $< $(BINDIR)
+	@rm -r ./bin
 
 uninstall: $(GEN)
 	sudo rm $(BINDIR)/vine
@@ -72,3 +71,11 @@ install-deb: vine-$(VERSION).deb
 	sudo apt install -f ./$<
 
 .PHONY: install-deb deb
+
+docker-image:
+	docker image build -t vine:latest -f ./Dockerfile .
+
+docker-container:
+	docker container run --rm -it vine:latest
+
+.PHONY: docker-image docker-continaer

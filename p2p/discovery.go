@@ -11,15 +11,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/harrybrwn/vine/internal/logging"
 	"github.com/harrybrwn/mdns"
+	"github.com/harrybrwn/vine/internal/logging"
 	"github.com/jackpal/gateway"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/miekg/dns"
 	"github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr-net"
+	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/sirupsen/logrus"
 )
 
@@ -212,7 +212,7 @@ func DiscoverOnce(self peer.ID, service string) (<-chan peer.AddrInfo, error) {
 }
 
 func mDNSEntryToAddr(e *mdns.ServiceEntry) (*DiscoveredPeer, error) {
-	peerID, err := peer.IDB58Decode(e.InfoFields[0])
+	peerID, err := peer.Decode(e.InfoFields[0])
 	if err != nil {
 		return nil, err
 	}

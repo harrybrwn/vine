@@ -112,7 +112,7 @@ func IsGenisis(b *Block) bool {
 func IsDefaultGenesis(b *Block) bool {
 	gen := DefaultGenesis()
 	return b.Nonce == gen.Nonce &&
-		bytes.Compare(b.Hash, gen.Hash) == 0 &&
+		bytes.Equal(b.Hash, gen.Hash) &&
 		b.PrevHash == nil &&
 		len(b.Transactions) == 0
 }
@@ -126,6 +126,10 @@ func (b *Block) CreateNext(data []byte) *Block {
 	}
 	block.Nonce, block.Hash = ProofOfWork(block)
 	return block
+}
+
+func FindForks(chain Chain) []*Block {
+	return nil
 }
 
 func merkleroot(hashes [][]byte, hasher hash.Hash) []byte {
@@ -155,6 +159,8 @@ func merkleroot(hashes [][]byte, hasher hash.Hash) []byte {
 // This is my attempt at translating the bitcoin merkleroot
 // function from c++ to go... I'm not really sure why its
 // still considered a merkle TREE??
+//
+// Anyways, don't use this one, use `merkleroot`
 func computeMerkleRoot(hashes [][]byte) []byte {
 	var (
 		l       = len(hashes)
